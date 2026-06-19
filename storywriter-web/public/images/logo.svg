@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- Background rounded rectangle -->
+  <rect x="2.5" y="2.5" width="95" height="95" rx="20" fill="#015887" stroke="#014c75" stroke-width="5"/>
+  <!-- Quill feather -->
+  <path d="M70 18 C55 28, 45 38, 30 65 C28 69, 32 66, 36 62 C42 55, 48 48, 52 42 C46 52, 38 64, 33 72 C31 76, 36 73, 40 69 C47 60, 54 50, 58 43 C52 54, 44 66, 39 74 C37 78, 42 75, 46 71 C54 62, 61 50, 65 40 C60 52, 52 64, 47 72 C45 76, 50 73, 53 69 C60 58, 66 44, 68 32 Z" fill="white" opacity="0.95"/>
+  <!-- Quill shaft / nib -->
+  <path d="M30 65 L22 82" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" opacity="0.95"/>
+  <!-- Ink dot -->
+  <circle cx="22" cy="82" r="2.5" fill="white" opacity="0.95"/>
+</svg>

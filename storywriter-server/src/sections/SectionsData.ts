@@ -1,0 +1,312 @@
+import { v4 as uuidv4 } from "uuid";
+import { Section } from "../model/Section";
+import {
+  DbUtilsExecSQL,
+  DbUtilsQuerySQL,
+  DbUtilsGetType,
+} from "../utils/DbUtils";
+
+// ==================== Section CRUD ====================
+
+export async function SectionsDataGet(id: string): Promise<Section> {
+  const rows = await DbUtilsQuerySQL(
+    SQL_QUERIES.GET_SECTION_BY_ID[DbUtilsGetType()],
+    [id],
+  );
+  if (rows.length === 0) {
+    return null;
+  }
+  return Section.fromJson(rows[0]);
+}
+
+export async function SectionsDataListByBook(
+  bookId: string,
+): Promise<Section[]> {
+  const rows = await DbUtilsQuerySQL(
+    SQL_QUERIES.LIST_SECTIONS_BY_BOOK[DbUtilsGetType()],
+    [bookId],
+  );
+  return rows.map((raw) => Section.fromJson(raw));
+}
+
+export async function SectionsDataListChildren(
+  parentId: string,
+): Promise<Section[]> {
+  const rows = await DbUtilsQuerySQL(
+    SQL_QUERIES.LIST_CHILDREN[DbUtilsGetType()],
+    [parentId],
+  );
+  return rows.map((raw) => Section.fromJson(raw));
+}
+
+export async function SectionsDataGetRootSection(
+  bookId: string,
+): Promise<Section> {
+  const rows = await DbUtilsQuerySQL(
+    SQL_QUERIES.GET_ROOT_SECTION[DbUtilsGetType()],
+    [bookId],
+  );
+  if (rows.length === 0) {
+    return null;
+  }
+  return Section.fromJson(rows[0]);
+}
+
+export async function SectionsDataAddRootSection(
+  bookId: string,
+): Promise<Section> {
+  const section = new Section();
+  section.bookId = bookId;
+  section.parentId = null;
+  section.title = "Root";
+  section.orderIndex = 0;
+  await DbUtilsExecSQL(SQL_QUERIES.INSERT_SECTION[DbUtilsGetType()], [
+    section.id,
+    section.bookId,
+    section.parentId,
+    section.type,
+    section.title,
+    section.content,
+    section.analysis,
+    section.mediaId,
+    section.caption,
+    section.orderIndex,
+    section.version,
+    section.dateCreated,
+    section.dateUpdated,
+  ]);
+  return section;
+}
+
+export async function SectionsDataAdd(section: Section): Promise<void> {
+  await DbUtilsExecSQL(SQL_QUERIES.INSERT_SECTION[DbUtilsGetType()], [
+    section.id,
+    section.bookId,
+    section.parentId,
+    section.type,
+    section.title,
+    section.content,
+    section.analysis,
+    section.mediaId,
+    section.caption,
+    section.orderIndex,
+    section.version,
+    section.dateCreated,
+    section.dateUpdated,
+  ]);
+}
+
+export async function SectionsDataUpdate(section: Section): Promise<void> {
+  section.dateUpdated = new Date().toISOString();
+  await DbUtilsExecSQL(SQL_QUERIES.UPDATE_SECTION[DbUtilsGetType()], [
+    section.type,
+    section.title,
+    section.content,
+    section.analysis,
+    section.mediaId,
+    section.caption,
+    section.dateUpdated,
+    section.id,
+  ]);
+}
+
+export async function SectionsDataUpdateOrder(
+  id: string,
+  orderIndex: number,
+): Promise<void> {
+  await DbUtilsExecSQL(SQL_QUERIES.UPDATE_SECTION_ORDER[DbUtilsGetType()], [
+    orderIndex,
+    id,
+  ]);
+}
+
+export async function SectionsDataMove(
+  id: string,
+  newParentId: string,
+  orderIndex: number,
+): Promise<void> {
+  await DbUtilsExecSQL(SQL_QUERIES.MOVE_SECTION[DbUtilsGetType()], [
+    newParentId,
+    orderIndex,
+    new Date().toISOString(),
+    id,
+  ]);
+}
+
+export async function SectionsDataDelete(id: string): Promise<void> {
+  // Delete section properties
+  await DbUtilsExecSQL(
+    SQL_QUERIES.DELETE_SECTION_PROPERTIES[DbUtilsGetType()],
+    [id],
+  );
+  // Delete section versions
+  await DbUtilsExecSQL(SQL_QUERIES.DELETE_SECTION_VERSIONS[DbUtilsGetType()], [
+    id,
+  ]);
+  // Recursively delete children
+  const children = await SectionsDataListChildren(id);
+  for (const child of children) {
+    await SectionsDataDelete(child.id);
+  }
+  // Delete the section itself
+  await DbUtilsExecSQL(SQL_QUERIES.DELETE_SECTION[DbUtilsGetType()], [id]);
+}
+
+// ==================== Copy ====================
+
+export async function SectionsDataCopy(
+  sourceId: string,
+  targetParentId: string,
+  orderIndex: number,
+): Promise<Section> {
+  const source = await SectionsDataGet(sourceId);
+  if (!source) {
+    return null;
+  }
+  const copy = new Section();
+  copy.bookId = source.bookId;
+  copy.parentId = targetParentId;
+  copy.title = `${source.title} (copy)`;
+  copy.content = source.content;
+  copy.analysis = source.analysis;
+  copy.orderIndex = orderIndex;
+  await SectionsDataAdd(copy);
+
+  // Recursively copy children
+  const children = await SectionsDataListChildren(sourceId);
+  for (let i = 0; i < children.length; i++) {
+    await SectionsDataCopy(children[i].id, copy.id, i);
+  }
+  return copy;
+}
+
+// ==================== Versioning ====================
+
+export async function SectionsDataCreateVersion(
+  sectionId: string,
+): Promise<void> {
+  const section = await SectionsDataGet(sectionId);
+  if (!section) {
+    return;
+  }
+  const versionId = uuidv4();
+  await DbUtilsExecSQL(SQL_QUERIES.INSERT_SECTION_VERSION[DbUtilsGetType()], [
+    versionId,
+    section.id,
+    section.version,
+    section.type,
+    section.title,
+    section.content,
+    section.analysis,
+    section.mediaId,
+    section.caption,
+    new Date().toISOString(),
+  ]);
+  // Bump version number
+  section.version += 1;
+  await DbUtilsExecSQL(SQL_QUERIES.BUMP_VERSION[DbUtilsGetType()], [
+    section.version,
+    new Date().toISOString(),
+    section.id,
+  ]);
+}
+
+export async function SectionsDataListVersions(
+  sectionId: string,
+): Promise<unknown[]> {
+  const rows = await DbUtilsQuerySQL(
+    SQL_QUERIES.LIST_SECTION_VERSIONS[DbUtilsGetType()],
+    [sectionId],
+  );
+  return rows;
+}
+
+export async function SectionsDataGetVersion(
+  sectionId: string,
+  version: number,
+): Promise<unknown> {
+  const rows = await DbUtilsQuerySQL(
+    SQL_QUERIES.GET_SECTION_VERSION[DbUtilsGetType()],
+    [sectionId, version],
+  );
+  return rows.length > 0 ? rows[0] : null;
+}
+
+const SQL_QUERIES = {
+  GET_SECTION_BY_ID: {
+    postgres: 'SELECT * FROM sections WHERE "id" = $1',
+    sqlite: "SELECT * FROM sections WHERE id = ?",
+  },
+  LIST_SECTIONS_BY_BOOK: {
+    postgres:
+      'SELECT * FROM sections WHERE "bookId" = $1 ORDER BY "orderIndex"',
+    sqlite: "SELECT * FROM sections WHERE bookId = ? ORDER BY orderIndex",
+  },
+  LIST_CHILDREN: {
+    postgres:
+      'SELECT * FROM sections WHERE "parentId" = $1 ORDER BY "orderIndex"',
+    sqlite: "SELECT * FROM sections WHERE parentId = ? ORDER BY orderIndex",
+  },
+  GET_ROOT_SECTION: {
+    postgres:
+      'SELECT * FROM sections WHERE "bookId" = $1 AND "parentId" IS NULL',
+    sqlite: "SELECT * FROM sections WHERE bookId = ? AND parentId IS NULL",
+  },
+  INSERT_SECTION: {
+    postgres:
+      'INSERT INTO sections ("id", "bookId", "parentId", "type", "title", "content", "analysis", "mediaId", "caption", "orderIndex", "version", "dateCreated", "dateUpdated") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)',
+    sqlite:
+      "INSERT INTO sections (id, bookId, parentId, type, title, content, analysis, mediaId, caption, orderIndex, version, dateCreated, dateUpdated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  },
+  UPDATE_SECTION: {
+    postgres:
+      'UPDATE sections SET "type" = $1, "title" = $2, "content" = $3, "analysis" = $4, "mediaId" = $5, "caption" = $6, "dateUpdated" = $7 WHERE "id" = $8',
+    sqlite:
+      "UPDATE sections SET type = ?, title = ?, content = ?, analysis = ?, mediaId = ?, caption = ?, dateUpdated = ? WHERE id = ?",
+  },
+  UPDATE_SECTION_ORDER: {
+    postgres: 'UPDATE sections SET "orderIndex" = $1 WHERE "id" = $2',
+    sqlite: "UPDATE sections SET orderIndex = ? WHERE id = ?",
+  },
+  MOVE_SECTION: {
+    postgres:
+      'UPDATE sections SET "parentId" = $1, "orderIndex" = $2, "dateUpdated" = $3 WHERE "id" = $4',
+    sqlite:
+      "UPDATE sections SET parentId = ?, orderIndex = ?, dateUpdated = ? WHERE id = ?",
+  },
+  DELETE_SECTION: {
+    postgres: 'DELETE FROM sections WHERE "id" = $1',
+    sqlite: "DELETE FROM sections WHERE id = ?",
+  },
+  DELETE_SECTION_PROPERTIES: {
+    postgres: 'DELETE FROM section_properties WHERE "sectionId" = $1',
+    sqlite: "DELETE FROM section_properties WHERE sectionId = ?",
+  },
+  DELETE_SECTION_VERSIONS: {
+    postgres: 'DELETE FROM section_versions WHERE "sectionId" = $1',
+    sqlite: "DELETE FROM section_versions WHERE sectionId = ?",
+  },
+  INSERT_SECTION_VERSION: {
+    postgres:
+      'INSERT INTO section_versions ("id", "sectionId", "version", "type", "title", "content", "analysis", "mediaId", "caption", "dateCreated") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+    sqlite:
+      "INSERT INTO section_versions (id, sectionId, version, type, title, content, analysis, mediaId, caption, dateCreated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  },
+  LIST_SECTION_VERSIONS: {
+    postgres:
+      'SELECT * FROM section_versions WHERE "sectionId" = $1 ORDER BY "version" DESC',
+    sqlite:
+      "SELECT * FROM section_versions WHERE sectionId = ? ORDER BY version DESC",
+  },
+  GET_SECTION_VERSION: {
+    postgres:
+      'SELECT * FROM section_versions WHERE "sectionId" = $1 AND "version" = $2',
+    sqlite:
+      "SELECT * FROM section_versions WHERE sectionId = ? AND version = ?",
+  },
+  BUMP_VERSION: {
+    postgres:
+      'UPDATE sections SET "version" = $1, "dateUpdated" = $2 WHERE "id" = $3',
+    sqlite: "UPDATE sections SET version = ?, dateUpdated = ? WHERE id = ?",
+  },
+};
