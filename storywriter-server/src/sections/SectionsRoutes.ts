@@ -153,7 +153,6 @@ export class SectionsRoutes {
       if (req.body.type !== undefined) section.type = req.body.type;
       if (req.body.title !== undefined) section.title = req.body.title;
       if (req.body.content !== undefined) section.content = req.body.content;
-      if (req.body.analysis !== undefined) section.analysis = req.body.analysis;
       if (req.body.mediaId !== undefined) section.mediaId = req.body.mediaId;
       if (req.body.caption !== undefined) section.caption = req.body.caption;
       await SectionsDataUpdate(section);

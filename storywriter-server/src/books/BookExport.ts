@@ -208,26 +208,50 @@ export async function BookImportRun(
       attributeIdMap.set(attr.id, uuidv4());
     }
 
-    // Import sections
-    for (const sec of sectionsData) {
-      const section = new Section();
-      section.id = sectionIdMap.get(sec.id);
-      section.bookId = newBook.id;
-      section.parentId = sec.parentId
-        ? sectionIdMap.get(sec.parentId) || null
-        : null;
-      section.type = sec.type || "text";
-      section.title = sec.title || "";
-      section.content = sec.content || "";
-      section.analysis = sec.analysis || "";
-      section.mediaId = sec.mediaId
-        ? mediaIdMap.get(sec.mediaId) || null
-        : null;
-      section.caption = sec.caption || "";
-      section.orderIndex = sec.orderIndex || 0;
-      section.dateCreated = sec.dateCreated || new Date().toISOString();
-      section.dateUpdated = sec.dateUpdated || new Date().toISOString();
-      await SectionsDataAdd(section);
+    // Import sections — topologically sort so parents are inserted before children
+    const sectionsToInsert = [...sectionsData];
+    const insertedSectionIds = new Set<string>();
+    while (sectionsToInsert.length > 0) {
+      const batch: typeof sectionsData = [];
+      const remaining: typeof sectionsData = [];
+      for (const sec of sectionsToInsert) {
+        const parentNewId = sec.parentId
+          ? sectionIdMap.get(sec.parentId) || null
+          : null;
+        // A section can be inserted if it has no parent, or its parent has already been inserted
+        if (!parentNewId || insertedSectionIds.has(parentNewId)) {
+          batch.push(sec);
+        } else {
+          remaining.push(sec);
+        }
+      }
+      // Safety: if no progress was made, insert remaining anyway to avoid infinite loop
+      if (batch.length === 0) {
+        sectionsToInsert.splice(0, sectionsToInsert.length, ...remaining);
+        break;
+      }
+      for (const sec of batch) {
+        const section = new Section();
+        section.id = sectionIdMap.get(sec.id);
+        section.bookId = newBook.id;
+        section.parentId = sec.parentId
+          ? sectionIdMap.get(sec.parentId) || null
+          : null;
+        section.type = sec.type || "text";
+        section.title = sec.title || "";
+        section.content = sec.content || "";
+        section.mediaId = sec.mediaId
+          ? mediaIdMap.get(sec.mediaId) || null
+          : null;
+        section.caption = sec.caption || "";
+        section.orderIndex = sec.orderIndex || 0;
+        section.dateCreated = sec.dateCreated || new Date().toISOString();
+        section.dateUpdated = sec.dateUpdated || new Date().toISOString();
+        await SectionsDataAdd(section);
+        insertedSectionIds.add(section.id);
+      }
+      sectionsToInsert.length = 0;
+      sectionsToInsert.push(...remaining);
     }
 
     // Import attributes

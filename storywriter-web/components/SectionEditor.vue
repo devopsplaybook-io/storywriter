@@ -21,13 +21,6 @@
             <option value="container">Container</option>
             <option value="media">Media</option>
           </select>
-          <button
-            class="btn-icon"
-            title="Show analysis"
-            @click="showAnalysis = !showAnalysis"
-          >
-            <i class="bi bi-robot" />
-          </button>
         </div>
       </header>
 
@@ -45,23 +38,6 @@
             {{ typeName }}
           </button>
         </div>
-      </div>
-
-      <!-- Text section: show analysis -->
-      <div
-        v-if="section.type === 'text' && showAnalysis"
-        class="analysis-section"
-      >
-        <label class="analysis-label">
-          <i class="bi bi-robot" /> Analysis (AI)
-        </label>
-        <textarea
-          v-model="analysis"
-          class="analysis-textarea"
-          placeholder="AI analysis notes (hidden by default)"
-          rows="3"
-          @blur="saveAnalysis"
-        />
       </div>
 
       <!-- Container section -->
@@ -153,12 +129,10 @@ const propertiesStore = usePropertiesStore();
 
 const contentRef = ref(null);
 const tab = ref("edit");
-const showAnalysis = ref(false);
 
 const type = ref("text");
 const title = ref("");
 const content = ref("");
-const analysis = ref("");
 const selectedMediaId = ref(null);
 const caption = ref("");
 
@@ -212,7 +186,7 @@ watch(
       type.value = props.section.type || "text";
       title.value = props.section.title || "";
       content.value = props.section.content || "";
-      analysis.value = props.section.analysis || "";
+
       selectedMediaId.value = props.section.mediaId || null;
       caption.value = props.section.caption || "";
       // Fetch section values for section types
@@ -235,12 +209,6 @@ function saveTitle() {
 function saveContent() {
   if (!props.section || content.value === (props.section.content || "")) return;
   emit("update", { content: content.value });
-}
-
-function saveAnalysis() {
-  if (!props.section || analysis.value === (props.section.analysis || ""))
-    return;
-  emit("update", { analysis: analysis.value });
 }
 
 function saveMediaId() {
@@ -358,33 +326,6 @@ function saveCaption() {
 .btn-icon:hover {
   border-color: var(--pico-muted-border-color, #444);
   color: var(--pico-primary);
-}
-
-.analysis-section {
-  border: 1px solid var(--pico-muted-border-color, #444);
-  border-radius: var(--radius-sm, 4px);
-  padding: var(--space-sm);
-  background: var(--pico-card-background-color, rgba(255, 255, 255, 0.02));
-}
-
-.analysis-label {
-  font-size: var(--text-sm);
-  color: var(--pico-muted-color);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2xs);
-  margin-bottom: var(--space-xs);
-}
-
-.analysis-textarea {
-  width: 100%;
-  min-height: 3em;
-  resize: vertical;
-  font-size: var(--text-md);
-  background: transparent;
-  border: 1px solid var(--pico-muted-border-color, #444);
-  border-radius: var(--radius-sm, 4px);
-  padding: var(--space-xs);
 }
 
 .container-info {

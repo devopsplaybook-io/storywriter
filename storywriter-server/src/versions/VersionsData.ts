@@ -25,24 +25,43 @@ export interface BookSnapshot {
   mediaMeta: Record<string, unknown>[];
 }
 
+async function ensureBookVersionsTable(): Promise<void> {
+  try {
+    await DbUtilsExecSQL(SQL_QUERIES.CREATE_TABLE[DbUtilsGetType()], []);
+  } catch {
+    // Table may already exist, ignore
+  }
+}
+
 export async function VersionsDataListByBook(
   bookId: string,
 ): Promise<BookVersion[]> {
-  const rows = await DbUtilsQuerySQL(
-    SQL_QUERIES.LIST_BY_BOOK[DbUtilsGetType()],
-    [bookId],
-  );
-  return rows.map((raw) => BookVersion.fromJson(raw));
+  await ensureBookVersionsTable();
+  try {
+    const rows = await DbUtilsQuerySQL(
+      SQL_QUERIES.LIST_BY_BOOK[DbUtilsGetType()],
+      [bookId],
+    );
+    return rows.map((raw) => BookVersion.fromJson(raw));
+  } catch {
+    return [];
+  }
 }
 
 export async function VersionsDataGet(id: string): Promise<BookVersion> {
-  const rows = await DbUtilsQuerySQL(SQL_QUERIES.GET_BY_ID[DbUtilsGetType()], [
-    id,
-  ]);
-  if (rows.length === 0) {
+  await ensureBookVersionsTable();
+  try {
+    const rows = await DbUtilsQuerySQL(
+      SQL_QUERIES.GET_BY_ID[DbUtilsGetType()],
+      [id],
+    );
+    if (rows.length === 0) {
+      return null;
+    }
+    return BookVersion.fromJson(rows[0]);
+  } catch {
     return null;
   }
-  return BookVersion.fromJson(rows[0]);
 }
 
 export async function VersionsDataCreate(
@@ -50,6 +69,7 @@ export async function VersionsDataCreate(
   note: string,
   config: Config,
 ): Promise<BookVersion> {
+  await ensureBookVersionsTable();
   // Get current max version number
   const maxRow = await DbUtilsQuerySQL(
     SQL_QUERIES.GET_MAX_VERSION[DbUtilsGetType()],
@@ -196,6 +216,12 @@ export async function VersionsDataRestore(
 }
 
 const SQL_QUERIES = {
+  CREATE_TABLE: {
+    postgres:
+      'CREATE TABLE IF NOT EXISTS book_versions ("id" VARCHAR(50) PRIMARY KEY, "bookId" VARCHAR(50) NOT NULL, "versionNumber" INTEGER NOT NULL, note TEXT NOT NULL DEFAULT \'\', snapshot TEXT NOT NULL, "dateCreated" VARCHAR(100) NOT NULL, FOREIGN KEY ("bookId") REFERENCES books(id))',
+    sqlite:
+      "CREATE TABLE IF NOT EXISTS book_versions (id VARCHAR(50) PRIMARY KEY, bookId VARCHAR(50) NOT NULL, versionNumber INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '', snapshot TEXT NOT NULL, dateCreated VARCHAR(100) NOT NULL, FOREIGN KEY (bookId) REFERENCES books(id))",
+  },
   LIST_BY_BOOK: {
     postgres:
       'SELECT * FROM book_versions WHERE "bookId" = $1 ORDER BY "versionNumber" DESC',

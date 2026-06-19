@@ -6,17 +6,6 @@
         <i class="bi bi-arrow-left" />
       </NuxtLink>
       <h2>{{ book?.name }}</h2>
-      <button
-        v-if="activePanel === 'sections'"
-        id="sidebar-toggle"
-        class="actions"
-        @click="toggleSidebar()"
-      >
-        <i
-          class="bi bi-layout-sidebar"
-          :class="{ 'toggle-active': sidebarOpen }"
-        />
-      </button>
       <div class="nav-tab-actions">
         <button
           class="btn-icon"
@@ -51,13 +40,12 @@
           <i class="bi bi-image" />
         </button>
         <button
-          class="btn-icon btn-analyze"
-          :class="{ analyzing: analyzingBook }"
+          class="btn-icon"
+          :class="{ active: activePanel === 'analysis' }"
           title="Analyze Book"
-          :disabled="analyzingBook"
-          @click="analyzeBook"
+          @click="activePanel = 'analysis'"
         >
-          <i class="bi bi-lightbulb" :class="{ spin: analyzingBook }" />
+          <i class="bi bi-lightbulb" />
         </button>
         <button
           class="btn-icon"
@@ -77,11 +65,7 @@
     </nav>
 
     <!-- Sidebar: only for sections -->
-    <aside
-      v-if="activePanel === 'sections'"
-      id="sidebar-panel"
-      :class="{ 'sidebar-closed': !sidebarOpen }"
-    >
+    <aside v-if="activePanel === 'sections'" id="sidebar-panel">
       <SectionTree
         :root-section="sectionsStore.rootSection"
         :selected-id="selectedSectionId"
@@ -123,6 +107,11 @@
         :book-id="book.id"
         :selected-id="selectedMediaId"
         @select="selectMedia"
+      />
+
+      <AnalysisViewer
+        v-if="activePanel === 'analysis' && book"
+        :book-id="book.id"
       />
     </div>
 
@@ -173,101 +162,6 @@
       </article>
     </dialog>
 
-    <!-- Analysis Dialog -->
-    <dialog :open="showAnalysis">
-      <article class="analysis-dialog">
-        <header>
-          <div class="analysis-header">
-            <h3><i class="bi bi-lightbulb" /> Book Analysis</h3>
-            <div class="analysis-header-actions">
-              <button
-                class="btn-icon"
-                title="Regenerate analysis"
-                :disabled="analyzingBook"
-                @click="analyzeBook"
-              >
-                <i
-                  class="bi bi-arrow-clockwise"
-                  :class="{ spin: analyzingBook }"
-                />
-              </button>
-              <button class="btn-icon" @click="showAnalysis = false">
-                <i class="bi bi-x-lg" />
-              </button>
-            </div>
-          </div>
-          <p v-if="analysisResult?.generatedAt" class="analysis-date">
-            Generated:
-            {{ new Date(analysisResult.generatedAt).toLocaleString() }}
-          </p>
-        </header>
-
-        <div v-if="analyzingBook" class="analysis-loading">
-          <div class="loading-indicator" />
-          <p>Analyzing your book... This may take a moment.</p>
-        </div>
-
-        <div v-else-if="analysisResult" class="analysis-content">
-          <!-- Tab toggle -->
-          <div v-if="analysisResult.rawOutput" class="analysis-tabs">
-            <button
-              :class="{ active: !showRawAnalysis }"
-              @click="showRawAnalysis = false"
-            >
-              <i class="bi bi-card-text" /> Formatted
-            </button>
-            <button
-              :class="{ active: showRawAnalysis }"
-              @click="showRawAnalysis = true"
-            >
-              <i class="bi bi-code-slash" /> Raw Output
-            </button>
-          </div>
-
-          <!-- Formatted view (parsed sections) -->
-          <template v-if="!showRawAnalysis">
-            <section v-if="analysisResult.summary" class="analysis-section">
-              <h4>Summary</h4>
-              <div v-html="renderMarkdown(analysisResult.summary)" />
-            </section>
-            <section v-if="analysisResult.strengths" class="analysis-section">
-              <h4>Strengths</h4>
-              <div v-html="renderMarkdown(analysisResult.strengths)" />
-            </section>
-            <section
-              v-if="analysisResult.improvements"
-              class="analysis-section"
-            >
-              <h4>Areas for Improvement</h4>
-              <div v-html="renderMarkdown(analysisResult.improvements)" />
-            </section>
-            <section v-if="analysisResult.suggestions" class="analysis-section">
-              <h4>Suggestions</h4>
-              <div v-html="renderMarkdown(analysisResult.suggestions)" />
-            </section>
-            <p
-              v-if="
-                !analysisResult.summary &&
-                !analysisResult.strengths &&
-                !analysisResult.improvements &&
-                !analysisResult.suggestions
-              "
-              class="analysis-empty"
-            >
-              No analysis available yet. Click the lightbulb to generate one.
-            </p>
-          </template>
-
-          <!-- Raw output view -->
-          <div v-else class="analysis-raw">
-            <pre
-              class="raw-output"
-            ><code>{{ analysisResult.rawOutput }}</code></pre>
-          </div>
-        </div>
-      </article>
-    </dialog>
-
     <!-- Delete Section Confirmation -->
     <dialog :open="deleteSectionTarget !== null">
       <article>
@@ -297,7 +191,6 @@
 </template>
 
 <script setup>
-import { marked } from "marked";
 import { useMediaStore } from "../../stores/media";
 import { usePropertiesStore } from "../../stores/properties";
 
@@ -318,16 +211,6 @@ const savingVersion = ref(false);
 const viewingVersionId = ref(null);
 const activePanel = ref("sections");
 const deleteSectionTarget = ref(null);
-const sidebarOpen = ref(true);
-const analyzingBook = ref(false);
-const showAnalysis = ref(false);
-const analysisResult = ref(null);
-const showRawAnalysis = ref(false);
-
-// Auto-detect mobile and start with sidebar closed
-function checkMobile() {
-  return window.innerWidth < 769;
-}
 
 const mediaList = computed(() => {
   if (!book.value) return [];
@@ -336,10 +219,6 @@ const mediaList = computed(() => {
 
 function selectMedia(media) {
   selectedMediaId.value = media?.id || null;
-}
-
-function toggleSidebar() {
-  sidebarOpen.value = !sidebarOpen.value;
 }
 
 const currentSection = computed(() => {
@@ -370,10 +249,6 @@ async function loadBook() {
 
 function selectSection(id) {
   selectedSectionId.value = id;
-  // On mobile, close sidebar after selecting a section
-  if (checkMobile()) {
-    sidebarOpen.value = false;
-  }
 }
 
 async function addChildSection(parentId) {
@@ -387,9 +262,6 @@ async function addChildSection(parentId) {
       children.length,
     );
     selectedSectionId.value = section.id;
-    if (checkMobile()) {
-      sidebarOpen.value = false;
-    }
   } catch {
     // silent
   }
@@ -457,59 +329,8 @@ async function deleteSection() {
   }
 }
 
-function renderMarkdown(text) {
-  if (!text) return "";
-  return marked(text);
-}
-
-async function analyzeBook() {
-  if (!book.value || analyzingBook.value) return;
-  showAnalysis.value = true;
-  analyzingBook.value = true;
-  showRawAnalysis.value = false;
-  try {
-    analysisResult.value = await booksStore.analyzeBook(book.value.id);
-  } catch (err) {
-    analysisResult.value = {
-      generatedAt: null,
-      bookId: book.value.id,
-      bookName: book.value.name,
-      summary: `Analysis failed: ${err.message || "Unknown error"}`,
-      strengths: null,
-      improvements: null,
-      suggestions: null,
-    };
-  } finally {
-    analyzingBook.value = false;
-  }
-}
-
 onMounted(async () => {
-  // Start with sidebar closed on mobile
-  if (checkMobile()) {
-    sidebarOpen.value = false;
-  }
   await loadBook();
-  // Load cached analysis if available
-  if (book.value) {
-    try {
-      const cached = await booksStore.fetchAnalysis(book.value.id);
-      if (cached.generatedAt) {
-        analysisResult.value = cached;
-      }
-    } catch {
-      // no cached analysis
-    }
-  }
-});
-
-// React to viewport changes
-onMounted(() => {
-  window.addEventListener("resize", () => {
-    if (!checkMobile() && !sidebarOpen.value) {
-      sidebarOpen.value = true;
-    }
-  });
 });
 </script>
 
@@ -543,7 +364,8 @@ onMounted(() => {
   /* Other modes: nav on top, full-width panel below */
   #book-detail-layout.mode-attributes,
   #book-detail-layout.mode-properties,
-  #book-detail-layout.mode-media {
+  #book-detail-layout.mode-media,
+  #book-detail-layout.mode-analysis {
     grid-template-rows: auto 1fr;
     grid-template-columns: 1fr;
     grid-template-areas:
@@ -553,12 +375,9 @@ onMounted(() => {
 
   #book-detail-layout.mode-attributes #book-nav,
   #book-detail-layout.mode-properties #book-nav,
-  #book-detail-layout.mode-media #book-nav {
+  #book-detail-layout.mode-media #book-nav,
+  #book-detail-layout.mode-analysis #book-nav {
     grid-area: nav;
-  }
-
-  #sidebar-toggle {
-    display: none;
   }
 
   #sidebar-panel {
@@ -584,61 +403,36 @@ onMounted(() => {
    Mobile layout (max-width: 768px)
    ============================================ */
 @media (max-width: 768px) {
-  /* Sections mode: nav, collapsible sidebar, editor */
+  /* Sections mode: nav, sidebar (30vh), editor (remaining) */
   #book-detail-layout.mode-sections {
-    grid-template-rows: auto auto 1fr;
+    grid-template-rows: auto 1fr 30vh;
     grid-template-columns: 1fr;
+    min-height: 0;
   }
 
   /* Other modes: nav, full content */
   #book-detail-layout.mode-attributes,
   #book-detail-layout.mode-properties,
-  #book-detail-layout.mode-media {
+  #book-detail-layout.mode-media,
+  #book-detail-layout.mode-analysis {
     grid-template-rows: auto 1fr;
     grid-template-columns: 1fr;
   }
 
-  #sidebar-toggle {
-    display: flex;
-    align-items: center;
-    padding: var(--space-xs);
-    font-size: var(--text-xl);
-    background: none;
-    border: none;
-    cursor: pointer;
-    color: var(--pico-muted-color);
-  }
-
-  #sidebar-toggle:hover {
-    color: var(--pico-primary);
-  }
-
-  .toggle-active {
-    color: var(--pico-primary) !important;
-  }
-
   #sidebar-panel {
     overflow: auto;
-    max-height: 50vh;
-    transition:
-      max-height 0.3s ease,
-      opacity 0.3s ease;
+    min-height: 0;
     border: 1px solid var(--pico-muted-border-color, #444);
     border-radius: var(--radius-sm, 4px);
     padding: var(--space-sm);
     background: var(--pico-card-background-color, rgba(255, 255, 255, 0.02));
   }
 
-  #sidebar-panel.sidebar-closed {
-    max-height: 0 !important;
-    overflow: hidden;
-    border: none;
-    padding: 0;
-    opacity: 0;
-  }
-
   #editor-panel {
     overflow-y: auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
 
   #panel-content {
@@ -718,147 +512,5 @@ onMounted(() => {
 
 .not-found i {
   font-size: var(--text-icon, 3rem);
-}
-
-/* ============================================
-   Analyze button
-   ============================================ */
-.btn-analyze {
-  color: #d4a017;
-}
-
-.btn-analyze:hover {
-  color: #f0c040 !important;
-  border-color: #d4a017 !important;
-}
-
-.btn-analyze.analyzing {
-  opacity: 0.6;
-  cursor: wait;
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.spin {
-  animation: spin 1s linear infinite;
-}
-
-/* ============================================
-   Analysis dialog
-   ============================================ */
-.analysis-dialog {
-  max-width: 720px;
-  max-height: 85vh;
-  overflow-y: auto;
-}
-
-.analysis-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.analysis-header h3 {
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-}
-
-.analysis-header h3 i {
-  color: #d4a017;
-}
-
-.analysis-header-actions {
-  display: flex;
-  gap: var(--space-2xs);
-}
-
-.analysis-date {
-  margin: var(--space-xs) 0 0;
-  font-size: var(--text-xs);
-  color: var(--pico-muted-color);
-}
-
-.analysis-loading {
-  text-align: center;
-  padding: var(--space-lg) 0;
-  color: var(--pico-muted-color);
-}
-
-.analysis-tabs {
-  display: flex;
-  gap: var(--space-xs);
-  margin-bottom: var(--space-md);
-  border-bottom: 1px solid var(--pico-muted-border-color, #444);
-  padding-bottom: var(--space-xs);
-}
-
-.analysis-tabs button {
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  padding: var(--space-xs) var(--space-sm);
-  font-size: var(--text-sm);
-  color: var(--pico-muted-color);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2xs);
-}
-
-.analysis-tabs button.active {
-  border-bottom-color: var(--pico-primary);
-  color: var(--pico-primary);
-}
-
-.analysis-raw {
-  max-height: 60vh;
-  overflow-y: auto;
-  border: 1px solid var(--pico-muted-border-color, #444);
-  border-radius: var(--radius-sm, 4px);
-  background: var(--pico-card-background-color, rgba(255, 255, 255, 0.02));
-}
-
-.raw-output {
-  margin: 0;
-  padding: var(--space-sm);
-  font-family: var(--font-mono, monospace);
-  font-size: var(--text-sm);
-  line-height: var(--leading-relaxed, 1.6);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.analysis-content {
-  padding-top: var(--space-sm);
-}
-
-.analysis-section {
-  margin-bottom: var(--space-md);
-  padding-bottom: var(--space-sm);
-  border-bottom: 1px solid var(--pico-muted-border-color, #444);
-}
-
-.analysis-section:last-child {
-  border-bottom: none;
-}
-
-.analysis-section h4 {
-  margin: 0 0 var(--space-xs);
-  color: var(--pico-primary);
-}
-
-.analysis-empty {
-  text-align: center;
-  color: var(--pico-muted-color);
-  padding: var(--space-md) 0;
 }
 </style>

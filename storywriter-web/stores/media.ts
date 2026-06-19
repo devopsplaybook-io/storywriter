@@ -66,7 +66,14 @@ export const useMediaStore = defineStore("media", {
     },
 
     getMediaUrl(bookId: string, mediaId: string): string {
-      return `/api/books/${bookId}/media/${mediaId}/file`;
+      const base = `/api/books/${bookId}/media/${mediaId}/file`;
+      if (typeof window !== "undefined") {
+        const token = localStorage.getItem("token");
+        if (token) {
+          return `${base}?token=${encodeURIComponent(token)}`;
+        }
+      }
+      return base;
     },
   },
 });

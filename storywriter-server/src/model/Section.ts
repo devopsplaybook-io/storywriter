@@ -16,7 +16,6 @@ export class Section {
     section.type = (json.type as SectionType) || "text";
     section.title = (json.title as string) || "";
     section.content = (json.content as string) || "";
-    section.analysis = (json.analysis as string) || "";
     section.mediaId = (json.mediaId as string) || null;
     section.caption = (json.caption as string) || "";
     section.orderIndex = (json.orderIndex as number) || 0;
@@ -33,7 +32,6 @@ export class Section {
   public type: SectionType;
   public title: string;
   public content: string;
-  public analysis: string;
   public mediaId: string | null;
   public caption: string;
   public orderIndex: number;
@@ -46,7 +44,6 @@ export class Section {
     this.type = "text";
     this.title = "";
     this.content = "";
-    this.analysis = "";
     this.mediaId = null;
     this.caption = "";
     this.orderIndex = 0;
@@ -62,7 +59,6 @@ export class Section {
       type: this.type,
       title: this.title,
       content: this.content,
-      analysis: this.analysis,
       mediaId: this.mediaId,
       caption: this.caption,
       orderIndex: this.orderIndex,
@@ -79,7 +75,6 @@ export class Section {
       type: this.type,
       title: this.title,
       content: this.content,
-      analysis: this.analysis,
       mediaId: this.mediaId,
       caption: this.caption,
       orderIndex: this.orderIndex,
