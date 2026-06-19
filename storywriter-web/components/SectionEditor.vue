@@ -22,26 +22,11 @@
             <option value="media">Media</option>
           </select>
           <button
-            v-if="section.type === 'text'"
             class="btn-icon"
-            :title="showAnalysis ? 'Hide analysis' : 'Show analysis'"
+            title="Show analysis"
             @click="showAnalysis = !showAnalysis"
           >
             <i class="bi bi-robot" />
-          </button>
-          <button
-            class="btn-icon"
-            title="Version history"
-            @click="$emit('versions')"
-          >
-            <i class="bi bi-clock-history" />
-          </button>
-          <button
-            class="btn-icon"
-            title="Save version"
-            @click="$emit('save-version')"
-          >
-            <i class="bi bi-bookmark-plus" />
           </button>
         </div>
       </header>
@@ -161,7 +146,7 @@ const props = defineProps({
   mediaList: { type: Array, default: () => [] },
 });
 
-const emit = defineEmits(["update", "versions", "save-version"]);
+const emit = defineEmits(["update"]);
 
 const mediaStore = useMediaStore();
 const propertiesStore = usePropertiesStore();

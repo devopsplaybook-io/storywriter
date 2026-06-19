@@ -4,7 +4,6 @@ import * as fs from "fs-extra";
 import * as path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { Config } from "../Config";
-import { DbUtilsExecSQL, DbUtilsGetType } from "../utils/DbUtils";
 import { Book } from "../model/Book";
 import { Section } from "../model/Section";
 import { BookAttribute } from "../model/BookAttribute";
@@ -12,12 +11,10 @@ import { Property } from "../model/Property";
 import { BooksDataGet, BooksDataAdd } from "./BooksData";
 import {
   SectionsDataListByBook,
-  SectionsDataListVersions,
   SectionsDataAdd,
 } from "../sections/SectionsData";
 import {
   BookAttributesDataListByBook,
-  BookAttributesDataListVersions,
   BookAttributesDataAdd,
 } from "../attributes/BookAttributesData";
 import {
@@ -28,7 +25,7 @@ import {
 } from "../properties/PropertiesData";
 import { MediaDataList, MediaDataAdd, Media } from "../media/MediaData";
 
-const EXPORT_VERSION = "1.0";
+const EXPORT_VERSION = "2.0";
 
 // ==================== EXPORT ====================
 
@@ -43,23 +40,7 @@ export async function BookExportRun(
 
   // Gather all data
   const sections = await SectionsDataListByBook(bookId);
-  const sectionVersions: Record<string, unknown>[] = [];
-  for (const section of sections) {
-    const versions = await SectionsDataListVersions(section.id);
-    for (const v of versions) {
-      sectionVersions.push(v as Record<string, unknown>);
-    }
-  }
-
   const attributes = await BookAttributesDataListByBook(bookId);
-  const attributeVersions: Record<string, unknown>[] = [];
-  for (const attr of attributes) {
-    const versions = await BookAttributesDataListVersions(attr.id);
-    for (const v of versions) {
-      attributeVersions.push(v as Record<string, unknown>);
-    }
-  }
-
   const properties = await PropertiesDataListByBook(bookId);
 
   const sectionProperties: {
@@ -91,9 +72,7 @@ export async function BookExportRun(
     manifest,
     book: book.toJson(),
     sections: sections.map((s) => s.toJson()),
-    sectionVersions,
     attributes: attributes.map((a) => a.toJson()),
-    attributeVersions,
     properties: properties.map((p) => p.toJson()),
     sectionProperties,
     mediaMetadata: mediaItems,
@@ -117,14 +96,8 @@ export async function BookExportRun(
   archive.append(JSON.stringify(exportData.sections, null, 2), {
     name: "sections.json",
   });
-  archive.append(JSON.stringify(exportData.sectionVersions, null, 2), {
-    name: "section-versions.json",
-  });
   archive.append(JSON.stringify(exportData.attributes, null, 2), {
     name: "attributes.json",
-  });
-  archive.append(JSON.stringify(exportData.attributeVersions, null, 2), {
-    name: "attribute-versions.json",
   });
   archive.append(JSON.stringify(exportData.properties, null, 2), {
     name: "properties.json",
@@ -189,14 +162,8 @@ export async function BookImportRun(
     const sectionsData = JSON.parse(
       await fs.readFile(path.join(tmpDir, "sections.json"), "utf-8"),
     );
-    const sectionVersionsData = JSON.parse(
-      await fs.readFile(path.join(tmpDir, "section-versions.json"), "utf-8"),
-    );
     const attributesData = JSON.parse(
       await fs.readFile(path.join(tmpDir, "attributes.json"), "utf-8"),
-    );
-    const attributeVersionsData = JSON.parse(
-      await fs.readFile(path.join(tmpDir, "attribute-versions.json"), "utf-8"),
     );
     const propertiesData = JSON.parse(
       await fs.readFile(path.join(tmpDir, "properties.json"), "utf-8"),
@@ -258,32 +225,9 @@ export async function BookImportRun(
         : null;
       section.caption = sec.caption || "";
       section.orderIndex = sec.orderIndex || 0;
-      section.version = sec.version || 1;
       section.dateCreated = sec.dateCreated || new Date().toISOString();
       section.dateUpdated = sec.dateUpdated || new Date().toISOString();
       await SectionsDataAdd(section);
-    }
-
-    // Import section versions
-    for (const sv of sectionVersionsData) {
-      const versionId = uuidv4();
-      const newSectionId = sectionIdMap.get(sv.sectionId);
-      if (!newSectionId) continue;
-      await DbUtilsExecSQL(
-        SQL_IMPORT.INSERT_SECTION_VERSION[DbUtilsGetType()],
-        [
-          versionId,
-          newSectionId,
-          sv.version,
-          sv.type || "text",
-          sv.title || "",
-          sv.content || "",
-          sv.analysis || "",
-          sv.mediaId ? mediaIdMap.get(sv.mediaId) || null : null,
-          sv.caption || "",
-          sv.dateCreated || new Date().toISOString(),
-        ],
-      );
     }
 
     // Import attributes
@@ -292,24 +236,6 @@ export async function BookImportRun(
       newAttr.id = attributeIdMap.get(attr.id);
       newAttr.bookId = newBook.id;
       await BookAttributesDataAdd(newAttr);
-    }
-
-    // Import attribute versions
-    for (const av of attributeVersionsData) {
-      const versionId = uuidv4();
-      const newAttrId = attributeIdMap.get(av.attributeId);
-      if (!newAttrId) continue;
-      await DbUtilsExecSQL(
-        SQL_IMPORT.INSERT_ATTRIBUTE_VERSION[DbUtilsGetType()],
-        [
-          versionId,
-          newAttrId,
-          av.version,
-          av.title || "",
-          av.content || "",
-          av.dateCreated || new Date().toISOString(),
-        ],
-      );
     }
 
     // Import properties
@@ -371,20 +297,3 @@ export async function BookImportRun(
     await fs.remove(tmpDir);
   }
 }
-
-// ==================== SQL for import ====================
-
-const SQL_IMPORT = {
-  INSERT_SECTION_VERSION: {
-    postgres:
-      'INSERT INTO section_versions ("id", "sectionId", "version", "type", "title", "content", "analysis", "mediaId", "caption", "dateCreated") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
-    sqlite:
-      "INSERT INTO section_versions (id, sectionId, version, type, title, content, analysis, mediaId, caption, dateCreated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  },
-  INSERT_ATTRIBUTE_VERSION: {
-    postgres:
-      'INSERT INTO book_attribute_versions ("id", "attributeId", "version", "title", "content", "dateCreated") VALUES ($1, $2, $3, $4, $5, $6)',
-    sqlite:
-      "INSERT INTO book_attribute_versions (id, attributeId, version, title, content, dateCreated) VALUES (?, ?, ?, ?, ?, ?)",
-  },
-};

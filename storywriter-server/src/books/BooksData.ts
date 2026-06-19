@@ -62,6 +62,9 @@ export async function BooksDataDelete(id: string): Promise<void> {
     id,
   ]);
   await DbUtilsExecSQL(SQL_QUERIES.DELETE_BOOK_ACCESS[DbUtilsGetType()], [id]);
+  await DbUtilsExecSQL(SQL_QUERIES.DELETE_BOOK_VERSIONS[DbUtilsGetType()], [
+    id,
+  ]);
   await DbUtilsExecSQL(SQL_QUERIES.DELETE_BOOK[DbUtilsGetType()], [id]);
 }
 
@@ -187,6 +190,10 @@ const SQL_QUERIES = {
   DELETE_BOOK_PROPERTIES: {
     postgres: 'DELETE FROM book_properties WHERE "bookId" = $1',
     sqlite: "DELETE FROM book_properties WHERE bookId = ?",
+  },
+  DELETE_BOOK_VERSIONS: {
+    postgres: 'DELETE FROM book_versions WHERE "bookId" = $1',
+    sqlite: "DELETE FROM book_versions WHERE bookId = ?",
   },
   DELETE_SECTIONS_FOR_BOOK: {
     postgres: 'DELETE FROM sections WHERE "bookId" = $1',

@@ -4,12 +4,9 @@ import { AuthGetUserSession } from "../users/Auth";
 import { BooksDataGetUserAccess } from "../books/BooksData";
 import {
   BookAttributesDataAdd,
-  BookAttributesDataCreateVersion,
   BookAttributesDataDelete,
   BookAttributesDataGet,
-  BookAttributesDataGetVersion,
   BookAttributesDataListByBook,
-  BookAttributesDataListVersions,
   BookAttributesDataUpdate,
 } from "./BookAttributesData";
 
@@ -112,56 +109,6 @@ export class BookAttributesRoutes {
       if (!(await checkBookAccess(req, res, attr.bookId, "write"))) return;
       await BookAttributesDataDelete(req.params.id);
       return res.status(200).send({});
-    });
-
-    // ==================== VERSIONING ====================
-
-    // Create version snapshot
-    interface PostVersion extends RequestGenericInterface {
-      Params: { id: string };
-    }
-    fastify.post<PostVersion>("/:id/version", async (req, res) => {
-      const attr = await BookAttributesDataGet(req.params.id);
-      if (!attr) {
-        return res.status(404).send({ error: "Attribute Not Found" });
-      }
-      if (!(await checkBookAccess(req, res, attr.bookId, "write"))) return;
-      await BookAttributesDataCreateVersion(req.params.id);
-      return res.status(201).send({});
-    });
-
-    // List versions
-    interface ListVersions extends RequestGenericInterface {
-      Params: { id: string };
-    }
-    fastify.get<ListVersions>("/:id/versions", async (req, res) => {
-      const attr = await BookAttributesDataGet(req.params.id);
-      if (!attr) {
-        return res.status(404).send({ error: "Attribute Not Found" });
-      }
-      if (!(await checkBookAccess(req, res, attr.bookId, "read"))) return;
-      const versions = await BookAttributesDataListVersions(req.params.id);
-      return res.status(200).send(versions);
-    });
-
-    // Get specific version
-    interface GetVersion extends RequestGenericInterface {
-      Params: { id: string; version: string };
-    }
-    fastify.get<GetVersion>("/:id/versions/:version", async (req, res) => {
-      const attr = await BookAttributesDataGet(req.params.id);
-      if (!attr) {
-        return res.status(404).send({ error: "Attribute Not Found" });
-      }
-      if (!(await checkBookAccess(req, res, attr.bookId, "read"))) return;
-      const version = await BookAttributesDataGetVersion(
-        req.params.id,
-        parseInt(req.params.version),
-      );
-      if (!version) {
-        return res.status(404).send({ error: "Version Not Found" });
-      }
-      return res.status(200).send(version);
     });
   }
 }

@@ -12,7 +12,6 @@ export class BookAttribute {
     attr.bookId = json.bookId as string;
     attr.title = (json.title as string) || "";
     attr.content = (json.content as string) || "";
-    attr.version = (json.version as number) || 1;
     attr.dateCreated = (json.dateCreated as string) || new Date().toISOString();
     attr.dateUpdated = (json.dateUpdated as string) || new Date().toISOString();
     return attr;
@@ -22,7 +21,6 @@ export class BookAttribute {
   public bookId: string;
   public title: string;
   public content: string;
-  public version: number;
   public dateCreated: string;
   public dateUpdated: string;
 
@@ -30,7 +28,6 @@ export class BookAttribute {
     this.id = uuidv4();
     this.title = "";
     this.content = "";
-    this.version = 1;
     this.dateCreated = new Date().toISOString();
     this.dateUpdated = new Date().toISOString();
   }
@@ -41,7 +38,6 @@ export class BookAttribute {
       bookId: this.bookId,
       title: this.title,
       content: this.content,
-      version: this.version,
       dateCreated: this.dateCreated,
       dateUpdated: this.dateUpdated,
     };
@@ -53,7 +49,6 @@ export class BookAttribute {
       bookId: this.bookId,
       title: this.title,
       content: this.content,
-      version: this.version,
       dateCreated: this.dateCreated,
       dateUpdated: this.dateUpdated,
     };

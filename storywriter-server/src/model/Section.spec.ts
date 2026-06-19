@@ -24,7 +24,6 @@ describe("Section", () => {
       expect(section.mediaId).toBeNull();
       expect(section.caption).toBe("");
       expect(section.orderIndex).toBe(0);
-      expect(section.version).toBe(1);
     });
   });
 
@@ -45,7 +44,6 @@ describe("Section", () => {
         mediaId: "media-1",
         caption: "A caption",
         orderIndex: 2,
-        version: 5,
         dateCreated: "2024-01-01T00:00:00.000Z",
         dateUpdated: "2024-01-02T00:00:00.000Z",
       };
@@ -60,7 +58,6 @@ describe("Section", () => {
       expect(section.mediaId).toBe("media-1");
       expect(section.caption).toBe("A caption");
       expect(section.orderIndex).toBe(2);
-      expect(section.version).toBe(5);
     });
 
     it("should default parentId and mediaId to null", () => {

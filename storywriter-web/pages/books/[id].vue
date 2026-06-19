@@ -59,6 +59,20 @@
         >
           <i class="bi bi-lightbulb" :class="{ spin: analyzingBook }" />
         </button>
+        <button
+          class="btn-icon"
+          title="Save Version"
+          @click="showSaveVersionDialog = true"
+        >
+          <i class="bi bi-save" />
+        </button>
+        <button
+          class="btn-icon"
+          title="Version History"
+          @click="showVersionsDialog = true"
+        >
+          <i class="bi bi-clock-history" />
+        </button>
       </div>
     </nav>
 
@@ -86,8 +100,6 @@
           :section="currentSection"
           :media-list="mediaList"
           @update="updateSection"
-          @versions="showVersions = true"
-          @save-version="saveVersion"
         />
       </template>
       <div v-else class="not-found">
@@ -115,11 +127,51 @@
     </div>
 
     <!-- Versions Dialog -->
-    <SectionVersionsDialog
-      :open="showVersions"
-      :section-id="selectedSectionId"
-      @close="showVersions = false"
+    <BookVersionsDialog
+      :open="showVersionsDialog"
+      :book-id="book?.id"
+      @close="showVersionsDialog = false"
+      @load-version="handleLoadVersion"
+      @close-version="handleCloseVersion"
+      @restored="handleVersionRestored"
     />
+
+    <!-- Save Version Dialog -->
+    <dialog :open="showSaveVersionDialog">
+      <article>
+        <header>
+          <h3>Save Version</h3>
+          <button
+            class="close-btn"
+            aria-label="Close"
+            @click="showSaveVersionDialog = false"
+          >
+            <i class="bi bi-x-lg" />
+          </button>
+        </header>
+        <p>Create a new snapshot of the entire book.</p>
+        <label>
+          Version Note
+          <textarea
+            v-model="versionNote"
+            placeholder="What changed in this version?"
+            rows="3"
+          />
+        </label>
+        <footer class="dialog-footer">
+          <button class="secondary" @click="showSaveVersionDialog = false">
+            Cancel
+          </button>
+          <button
+            :aria-busy="savingVersion"
+            :disabled="savingVersion"
+            @click="handleSaveVersion"
+          >
+            Save Version
+          </button>
+        </footer>
+      </article>
+    </dialog>
 
     <!-- Analysis Dialog -->
     <dialog :open="showAnalysis">
@@ -156,33 +208,62 @@
         </div>
 
         <div v-else-if="analysisResult" class="analysis-content">
-          <section v-if="analysisResult.summary" class="analysis-section">
-            <h4>Summary</h4>
-            <div v-html="renderMarkdown(analysisResult.summary)" />
-          </section>
-          <section v-if="analysisResult.strengths" class="analysis-section">
-            <h4>Strengths</h4>
-            <div v-html="renderMarkdown(analysisResult.strengths)" />
-          </section>
-          <section v-if="analysisResult.improvements" class="analysis-section">
-            <h4>Areas for Improvement</h4>
-            <div v-html="renderMarkdown(analysisResult.improvements)" />
-          </section>
-          <section v-if="analysisResult.suggestions" class="analysis-section">
-            <h4>Suggestions</h4>
-            <div v-html="renderMarkdown(analysisResult.suggestions)" />
-          </section>
-          <p
-            v-if="
-              !analysisResult.summary &&
-              !analysisResult.strengths &&
-              !analysisResult.improvements &&
-              !analysisResult.suggestions
-            "
-            class="analysis-empty"
-          >
-            No analysis available yet. Click the lightbulb to generate one.
-          </p>
+          <!-- Tab toggle -->
+          <div v-if="analysisResult.rawOutput" class="analysis-tabs">
+            <button
+              :class="{ active: !showRawAnalysis }"
+              @click="showRawAnalysis = false"
+            >
+              <i class="bi bi-card-text" /> Formatted
+            </button>
+            <button
+              :class="{ active: showRawAnalysis }"
+              @click="showRawAnalysis = true"
+            >
+              <i class="bi bi-code-slash" /> Raw Output
+            </button>
+          </div>
+
+          <!-- Formatted view (parsed sections) -->
+          <template v-if="!showRawAnalysis">
+            <section v-if="analysisResult.summary" class="analysis-section">
+              <h4>Summary</h4>
+              <div v-html="renderMarkdown(analysisResult.summary)" />
+            </section>
+            <section v-if="analysisResult.strengths" class="analysis-section">
+              <h4>Strengths</h4>
+              <div v-html="renderMarkdown(analysisResult.strengths)" />
+            </section>
+            <section
+              v-if="analysisResult.improvements"
+              class="analysis-section"
+            >
+              <h4>Areas for Improvement</h4>
+              <div v-html="renderMarkdown(analysisResult.improvements)" />
+            </section>
+            <section v-if="analysisResult.suggestions" class="analysis-section">
+              <h4>Suggestions</h4>
+              <div v-html="renderMarkdown(analysisResult.suggestions)" />
+            </section>
+            <p
+              v-if="
+                !analysisResult.summary &&
+                !analysisResult.strengths &&
+                !analysisResult.improvements &&
+                !analysisResult.suggestions
+              "
+              class="analysis-empty"
+            >
+              No analysis available yet. Click the lightbulb to generate one.
+            </p>
+          </template>
+
+          <!-- Raw output view -->
+          <div v-else class="analysis-raw">
+            <pre
+              class="raw-output"
+            ><code>{{ analysisResult.rawOutput }}</code></pre>
+          </div>
         </div>
       </article>
     </dialog>
@@ -230,13 +311,18 @@ const loading = ref(true);
 const book = ref(null);
 const selectedSectionId = ref(null);
 const selectedMediaId = ref(null);
-const showVersions = ref(false);
+const showVersionsDialog = ref(false);
+const showSaveVersionDialog = ref(false);
+const versionNote = ref("");
+const savingVersion = ref(false);
+const viewingVersionId = ref(null);
 const activePanel = ref("sections");
 const deleteSectionTarget = ref(null);
 const sidebarOpen = ref(true);
 const analyzingBook = ref(false);
 const showAnalysis = ref(false);
 const analysisResult = ref(null);
+const showRawAnalysis = ref(false);
 
 // Auto-detect mobile and start with sidebar closed
 function checkMobile() {
@@ -318,12 +404,35 @@ async function updateSection(data) {
   }
 }
 
-async function saveVersion() {
-  if (!selectedSectionId.value) return;
+async function handleSaveVersion() {
+  if (!book.value) return;
+  savingVersion.value = true;
   try {
-    await sectionsStore.createVersion(selectedSectionId.value);
+    await booksStore.createVersion(book.value.id, versionNote.value);
+    showSaveVersionDialog.value = false;
+    versionNote.value = "";
   } catch {
     // silent
+  } finally {
+    savingVersion.value = false;
+  }
+}
+
+function handleLoadVersion(versionId) {
+  viewingVersionId.value = versionId;
+  showVersionsDialog.value = false;
+}
+
+function handleCloseVersion() {
+  viewingVersionId.value = null;
+  if (book.value) {
+    sectionsStore.fetchByBook(book.value.id);
+  }
+}
+
+async function handleVersionRestored() {
+  if (book.value) {
+    await loadBook();
   }
 }
 
@@ -357,6 +466,7 @@ async function analyzeBook() {
   if (!book.value || analyzingBook.value) return;
   showAnalysis.value = true;
   analyzingBook.value = true;
+  showRawAnalysis.value = false;
   try {
     analysisResult.value = await booksStore.analyzeBook(book.value.id);
   } catch (err) {
@@ -681,6 +791,50 @@ onMounted(() => {
   text-align: center;
   padding: var(--space-lg) 0;
   color: var(--pico-muted-color);
+}
+
+.analysis-tabs {
+  display: flex;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+  border-bottom: 1px solid var(--pico-muted-border-color, #444);
+  padding-bottom: var(--space-xs);
+}
+
+.analysis-tabs button {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--text-sm);
+  color: var(--pico-muted-color);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+.analysis-tabs button.active {
+  border-bottom-color: var(--pico-primary);
+  color: var(--pico-primary);
+}
+
+.analysis-raw {
+  max-height: 60vh;
+  overflow-y: auto;
+  border: 1px solid var(--pico-muted-border-color, #444);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--pico-card-background-color, rgba(255, 255, 255, 0.02));
+}
+
+.raw-output {
+  margin: 0;
+  padding: var(--space-sm);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed, 1.6);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .analysis-content {

@@ -35,6 +35,7 @@ export interface BookAnalysisResult {
   strengths: string;
   improvements: string;
   suggestions: string;
+  rawOutput: string | null;
 }
 
 export async function BookAnalysisGetCached(
@@ -101,10 +102,11 @@ export async function BookAnalysisGenerate(
   let strengths: string;
   let improvements: string;
   let suggestions: string;
+  let fullContent: string | null = null;
 
   try {
     const llmResponse = await callLLMWithRetry(prompt);
-    const fullContent = llmResponse || "";
+    fullContent = llmResponse || "";
 
     if (!fullContent || fullContent.trim().length < 20) {
       logger.warn(
@@ -151,6 +153,7 @@ export async function BookAnalysisGenerate(
     strengths,
     improvements,
     suggestions,
+    rawOutput: fullContent || null,
   };
 
   const filePath = getFilePath(bookId);

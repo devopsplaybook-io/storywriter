@@ -1,4 +1,3 @@
-import { v4 as uuidv4 } from "uuid";
 import { Section } from "../model/Section";
 import {
   DbUtilsExecSQL,
@@ -71,7 +70,6 @@ export async function SectionsDataAddRootSection(
     section.mediaId,
     section.caption,
     section.orderIndex,
-    section.version,
     section.dateCreated,
     section.dateUpdated,
   ]);
@@ -90,7 +88,6 @@ export async function SectionsDataAdd(section: Section): Promise<void> {
     section.mediaId,
     section.caption,
     section.orderIndex,
-    section.version,
     section.dateCreated,
     section.dateUpdated,
   ]);
@@ -139,10 +136,6 @@ export async function SectionsDataDelete(id: string): Promise<void> {
     SQL_QUERIES.DELETE_SECTION_PROPERTIES[DbUtilsGetType()],
     [id],
   );
-  // Delete section versions
-  await DbUtilsExecSQL(SQL_QUERIES.DELETE_SECTION_VERSIONS[DbUtilsGetType()], [
-    id,
-  ]);
   // Recursively delete children
   const children = await SectionsDataListChildren(id);
   for (const child of children) {
@@ -180,58 +173,6 @@ export async function SectionsDataCopy(
   return copy;
 }
 
-// ==================== Versioning ====================
-
-export async function SectionsDataCreateVersion(
-  sectionId: string,
-): Promise<void> {
-  const section = await SectionsDataGet(sectionId);
-  if (!section) {
-    return;
-  }
-  const versionId = uuidv4();
-  await DbUtilsExecSQL(SQL_QUERIES.INSERT_SECTION_VERSION[DbUtilsGetType()], [
-    versionId,
-    section.id,
-    section.version,
-    section.type,
-    section.title,
-    section.content,
-    section.analysis,
-    section.mediaId,
-    section.caption,
-    new Date().toISOString(),
-  ]);
-  // Bump version number
-  section.version += 1;
-  await DbUtilsExecSQL(SQL_QUERIES.BUMP_VERSION[DbUtilsGetType()], [
-    section.version,
-    new Date().toISOString(),
-    section.id,
-  ]);
-}
-
-export async function SectionsDataListVersions(
-  sectionId: string,
-): Promise<unknown[]> {
-  const rows = await DbUtilsQuerySQL(
-    SQL_QUERIES.LIST_SECTION_VERSIONS[DbUtilsGetType()],
-    [sectionId],
-  );
-  return rows;
-}
-
-export async function SectionsDataGetVersion(
-  sectionId: string,
-  version: number,
-): Promise<unknown> {
-  const rows = await DbUtilsQuerySQL(
-    SQL_QUERIES.GET_SECTION_VERSION[DbUtilsGetType()],
-    [sectionId, version],
-  );
-  return rows.length > 0 ? rows[0] : null;
-}
-
 const SQL_QUERIES = {
   GET_SECTION_BY_ID: {
     postgres: 'SELECT * FROM sections WHERE "id" = $1',
@@ -254,9 +195,9 @@ const SQL_QUERIES = {
   },
   INSERT_SECTION: {
     postgres:
-      'INSERT INTO sections ("id", "bookId", "parentId", "type", "title", "content", "analysis", "mediaId", "caption", "orderIndex", "version", "dateCreated", "dateUpdated") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)',
+      'INSERT INTO sections ("id", "bookId", "parentId", "type", "title", "content", "analysis", "mediaId", "caption", "orderIndex", "dateCreated", "dateUpdated") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)',
     sqlite:
-      "INSERT INTO sections (id, bookId, parentId, type, title, content, analysis, mediaId, caption, orderIndex, version, dateCreated, dateUpdated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO sections (id, bookId, parentId, type, title, content, analysis, mediaId, caption, orderIndex, dateCreated, dateUpdated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   },
   UPDATE_SECTION: {
     postgres:
@@ -281,32 +222,5 @@ const SQL_QUERIES = {
   DELETE_SECTION_PROPERTIES: {
     postgres: 'DELETE FROM section_properties WHERE "sectionId" = $1',
     sqlite: "DELETE FROM section_properties WHERE sectionId = ?",
-  },
-  DELETE_SECTION_VERSIONS: {
-    postgres: 'DELETE FROM section_versions WHERE "sectionId" = $1',
-    sqlite: "DELETE FROM section_versions WHERE sectionId = ?",
-  },
-  INSERT_SECTION_VERSION: {
-    postgres:
-      'INSERT INTO section_versions ("id", "sectionId", "version", "type", "title", "content", "analysis", "mediaId", "caption", "dateCreated") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
-    sqlite:
-      "INSERT INTO section_versions (id, sectionId, version, type, title, content, analysis, mediaId, caption, dateCreated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  },
-  LIST_SECTION_VERSIONS: {
-    postgres:
-      'SELECT * FROM section_versions WHERE "sectionId" = $1 ORDER BY "version" DESC',
-    sqlite:
-      "SELECT * FROM section_versions WHERE sectionId = ? ORDER BY version DESC",
-  },
-  GET_SECTION_VERSION: {
-    postgres:
-      'SELECT * FROM section_versions WHERE "sectionId" = $1 AND "version" = $2',
-    sqlite:
-      "SELECT * FROM section_versions WHERE sectionId = ? AND version = ?",
-  },
-  BUMP_VERSION: {
-    postgres:
-      'UPDATE sections SET "version" = $1, "dateUpdated" = $2 WHERE "id" = $3',
-    sqlite: "UPDATE sections SET version = ?, dateUpdated = ? WHERE id = ?",
   },
 };

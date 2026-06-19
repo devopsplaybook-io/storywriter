@@ -14,7 +14,6 @@ export interface Section {
   mediaId: string | null;
   caption: string;
   orderIndex: number;
-  version: number;
   dateCreated: string;
   dateUpdated: string;
 }
@@ -110,20 +109,6 @@ export const useSectionsStore = defineStore("sections", {
       await api.delete(`/sections/${id}`);
       this.sections = this.sections.filter((s) => s.id !== id);
       if (this.currentSection?.id === id) this.currentSection = null;
-    },
-
-    async createVersion(id: string) {
-      await api.post(`/sections/${id}/version`);
-    },
-
-    async fetchVersions(id: string) {
-      const res = await api.get(`/sections/${id}/versions`);
-      return res.data;
-    },
-
-    async fetchVersion(id: string, version: number) {
-      const res = await api.get(`/sections/${id}/versions/${version}`);
-      return res.data;
     },
   },
 });

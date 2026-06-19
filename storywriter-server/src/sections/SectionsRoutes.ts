@@ -5,14 +5,11 @@ import { BooksDataGetUserAccess } from "../books/BooksData";
 import {
   SectionsDataAdd,
   SectionsDataCopy,
-  SectionsDataCreateVersion,
   SectionsDataDelete,
   SectionsDataGet,
   SectionsDataGetRootSection,
-  SectionsDataGetVersion,
   SectionsDataListByBook,
   SectionsDataListChildren,
-  SectionsDataListVersions,
   SectionsDataMove,
   SectionsDataUpdate,
   SectionsDataUpdateOrder,
@@ -231,56 +228,6 @@ export class SectionsRoutes {
       if (!(await checkBookAccess(req, res, section.bookId, "write"))) return;
       await SectionsDataDelete(req.params.id);
       return res.status(200).send({});
-    });
-
-    // ==================== VERSIONING ====================
-
-    // Create a version snapshot
-    interface PostVersion extends RequestGenericInterface {
-      Params: { id: string };
-    }
-    fastify.post<PostVersion>("/:id/version", async (req, res) => {
-      const section = await SectionsDataGet(req.params.id);
-      if (!section) {
-        return res.status(404).send({ error: "Section Not Found" });
-      }
-      if (!(await checkBookAccess(req, res, section.bookId, "write"))) return;
-      await SectionsDataCreateVersion(req.params.id);
-      return res.status(201).send({});
-    });
-
-    // List versions
-    interface ListVersions extends RequestGenericInterface {
-      Params: { id: string };
-    }
-    fastify.get<ListVersions>("/:id/versions", async (req, res) => {
-      const section = await SectionsDataGet(req.params.id);
-      if (!section) {
-        return res.status(404).send({ error: "Section Not Found" });
-      }
-      if (!(await checkBookAccess(req, res, section.bookId, "read"))) return;
-      const versions = await SectionsDataListVersions(req.params.id);
-      return res.status(200).send(versions);
-    });
-
-    // Get specific version
-    interface GetVersion extends RequestGenericInterface {
-      Params: { id: string; version: string };
-    }
-    fastify.get<GetVersion>("/:id/versions/:version", async (req, res) => {
-      const section = await SectionsDataGet(req.params.id);
-      if (!section) {
-        return res.status(404).send({ error: "Section Not Found" });
-      }
-      if (!(await checkBookAccess(req, res, section.bookId, "read"))) return;
-      const version = await SectionsDataGetVersion(
-        req.params.id,
-        parseInt(req.params.version),
-      );
-      if (!version) {
-        return res.status(404).send({ error: "Version Not Found" });
-      }
-      return res.status(200).send(version);
     });
   }
 }

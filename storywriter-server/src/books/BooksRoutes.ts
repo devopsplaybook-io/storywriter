@@ -18,6 +18,12 @@ import { BookExportRun, BookImportRun } from "./BookExport";
 import { Config } from "../Config";
 import { Property } from "../model/Property";
 import { PropertiesDataAdd } from "../properties/PropertiesData";
+import {
+  VersionsDataListByBook,
+  VersionsDataGet,
+  VersionsDataCreate,
+  VersionsDataRestore,
+} from "../versions/VersionsData";
 
 export class BooksRoutes {
   private config: Config;
@@ -194,6 +200,116 @@ export class BooksRoutes {
       await BooksDataRemoveAccess(req.params.id, req.params.userId);
       return res.status(200).send({});
     });
+
+    // ==================== BOOK VERSIONING ====================
+
+    // Create version snapshot
+    interface PostVersion extends RequestGenericInterface {
+      Params: { id: string };
+      Body: { note?: string };
+    }
+    fastify.post<PostVersion>("/:id/versions", async (req, res) => {
+      const userSession = await AuthGetUserSession(req);
+      if (!userSession.isAuthenticated) {
+        return res.status(403).send({ error: "Access Denied" });
+      }
+      const book = await BooksDataGet(req.params.id);
+      if (!book) {
+        return res.status(404).send({ error: "Book Not Found" });
+      }
+      // Check write access or admin
+      if (userSession.role !== "admin") {
+        const access = await BooksDataGetUserAccess(
+          book.id,
+          userSession.userId,
+        );
+        if (access !== "write") {
+          return res.status(403).send({ error: "Write Access Required" });
+        }
+      }
+      const note = req.body?.note || "";
+      try {
+        const version = await VersionsDataCreate(req.params.id, note, config);
+        return res.status(201).send(version.toTransportJson());
+      } catch (err) {
+        return res.status(500).send({
+          error: `Version creation failed: ${err.message || "Unknown error"}`,
+        });
+      }
+    });
+
+    // List versions
+    interface ListVersions extends RequestGenericInterface {
+      Params: { id: string };
+    }
+    fastify.get<ListVersions>("/:id/versions", async (req, res) => {
+      const userSession = await AuthGetUserSession(req);
+      if (!userSession.isAuthenticated) {
+        return res.status(403).send({ error: "Access Denied" });
+      }
+      const book = await BooksDataGet(req.params.id);
+      if (!book) {
+        return res.status(404).send({ error: "Book Not Found" });
+      }
+      const versions = await VersionsDataListByBook(req.params.id);
+      return res.status(200).send(versions.map((v) => v.toTransportJson()));
+    });
+
+    // Get specific version
+    interface GetVersion extends RequestGenericInterface {
+      Params: { id: string; versionId: string };
+    }
+    fastify.get<GetVersion>("/:id/versions/:versionId", async (req, res) => {
+      const userSession = await AuthGetUserSession(req);
+      if (!userSession.isAuthenticated) {
+        return res.status(403).send({ error: "Access Denied" });
+      }
+      const version = await VersionsDataGet(req.params.versionId);
+      if (!version || version.bookId !== req.params.id) {
+        return res.status(404).send({ error: "Version Not Found" });
+      }
+      return res.status(200).send(version.toTransportJson());
+    });
+
+    // Restore version
+    interface RestoreVersion extends RequestGenericInterface {
+      Params: { id: string; versionId: string };
+    }
+    fastify.post<RestoreVersion>(
+      "/:id/versions/:versionId/restore",
+      async (req, res) => {
+        const userSession = await AuthGetUserSession(req);
+        if (!userSession.isAuthenticated) {
+          return res.status(403).send({ error: "Access Denied" });
+        }
+        const book = await BooksDataGet(req.params.id);
+        if (!book) {
+          return res.status(404).send({ error: "Book Not Found" });
+        }
+        // Check write access or admin
+        if (userSession.role !== "admin") {
+          const access = await BooksDataGetUserAccess(
+            book.id,
+            userSession.userId,
+          );
+          if (access !== "write") {
+            return res.status(403).send({ error: "Write Access Required" });
+          }
+        }
+        const version = await VersionsDataGet(req.params.versionId);
+        if (!version || version.bookId !== req.params.id) {
+          return res.status(404).send({ error: "Version Not Found" });
+        }
+        try {
+          await VersionsDataRestore(req.params.versionId, config);
+          return res.status(200).send({ success: true });
+        } catch (err) {
+          return res.status(500).send({
+            error: `Restore failed: ${err.message || "Unknown error"}`,
+          });
+        }
+      },
+    );
 
     // ==================== EXPORT BOOK ====================
     interface ExportBook extends RequestGenericInterface {

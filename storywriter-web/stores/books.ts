@@ -8,6 +8,14 @@ export interface Book {
   dateCreated: string;
 }
 
+export interface BookVersionSummary {
+  id: string;
+  bookId: string;
+  versionNumber: number;
+  note: string;
+  dateCreated: string;
+}
+
 export interface BookAccess {
   bookId: string;
   userId: string;
@@ -22,6 +30,7 @@ export interface BookAnalysisResult {
   strengths: string | null;
   improvements: string | null;
   suggestions: string | null;
+  rawOutput: string | null;
 }
 
 export const useBooksStore = defineStore("books", {
@@ -112,6 +121,34 @@ export const useBooksStore = defineStore("books", {
       });
       this.books.push(res.data);
       return res.data;
+    },
+
+    // ==================== Versioning ====================
+
+    async createVersion(
+      bookId: string,
+      note: string,
+    ): Promise<BookVersionSummary> {
+      const res = await api.post(`/books/${bookId}/versions`, { note });
+      return res.data;
+    },
+
+    async fetchVersions(bookId: string): Promise<BookVersionSummary[]> {
+      const res = await api.get(`/books/${bookId}/versions`);
+      return res.data;
+    },
+
+    async fetchVersion(
+      bookId: string,
+      versionId: string,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ): Promise<any> {
+      const res = await api.get(`/books/${bookId}/versions/${versionId}`);
+      return res.data;
+    },
+
+    async restoreVersion(bookId: string, versionId: string): Promise<void> {
+      await api.post(`/books/${bookId}/versions/${versionId}/restore`);
     },
   },
 });

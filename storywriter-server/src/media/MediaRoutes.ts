@@ -132,7 +132,7 @@ export class MediaRoutes {
       } catch {
         return res.status(404).send({ error: "File Not Found" });
       }
-      return res.sendFile(filePath);
+      return res.sendFile(media.filename, mediaDir);
     });
 
     // ==================== UPLOAD MEDIA ====================
