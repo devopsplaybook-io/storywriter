@@ -97,10 +97,10 @@ export async function BookAnalysisGenerate(
     sectionPropertyValues,
   );
 
-  let summary = "";
-  let strengths = "";
-  let improvements = "";
-  let suggestions = "";
+  let summary: string;
+  let strengths: string;
+  let improvements: string;
+  let suggestions: string;
 
   try {
     const llmResponse = await callLLMWithRetry(prompt);
