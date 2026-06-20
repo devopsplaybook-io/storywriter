@@ -1,7 +1,10 @@
 <template>
   <div
     id="book-detail-layout"
-    :class="['mode-' + activePanel, { 'sidebar-collapsed': effectiveSidebarCollapsed }]"
+    :class="[
+      'mode-' + activePanel,
+      { 'sidebar-collapsed': effectiveSidebarCollapsed },
+    ]"
   >
     <!-- Top navigation bar (always visible) -->
     <nav id="book-nav">
