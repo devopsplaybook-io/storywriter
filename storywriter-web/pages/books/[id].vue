@@ -1,7 +1,7 @@
 <template>
   <div
     id="book-detail-layout"
-    :class="['mode-' + activePanel, { 'sidebar-collapsed': sidebarCollapsed }]"
+    :class="['mode-' + activePanel, { 'sidebar-collapsed': effectiveSidebarCollapsed }]"
   >
     <!-- Top navigation bar (always visible) -->
     <nav id="book-nav">
@@ -271,7 +271,36 @@ const versionNote = ref("");
 const savingVersion = ref(false);
 const viewingVersionId = ref(null);
 const activePanel = ref("sections");
-const sidebarCollapsed = ref(true);
+const sidebarCollapsed = ref(
+  typeof window !== "undefined"
+    ? localStorage.getItem("storywriter.sidebarCollapsed") === "true"
+    : true,
+);
+const isMobile = ref(
+  typeof window !== "undefined" ? window.innerWidth <= 768 : false,
+);
+
+// Desktop: sidebar always expanded; mobile: use saved preference
+const effectiveSidebarCollapsed = computed(() => {
+  if (!isMobile.value) return false;
+  return sidebarCollapsed.value;
+});
+
+// Persist sidebar state for mobile
+watch(sidebarCollapsed, (val) => {
+  if (isMobile.value) {
+    localStorage.setItem("storywriter.sidebarCollapsed", String(val));
+  }
+});
+
+onMounted(() => {
+  const mq = window.matchMedia("(max-width: 768px)");
+  const handler = (e) => {
+    isMobile.value = e.matches;
+  };
+  mq.addEventListener("change", handler);
+  onBeforeUnmount(() => mq.removeEventListener("change", handler));
+});
 const sectionViewMode = ref("section");
 
 // Persist view mode preference per section type
