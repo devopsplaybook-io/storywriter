@@ -497,18 +497,27 @@ function saveCaption() {
 
 /* Mobile: stack header, full-width textareas */
 @media (max-width: 768px) {
-  .editor-header {
-    grid-template-columns: 1fr;
+  .section-editor {
     gap: var(--space-xs);
   }
 
+  .editor-header {
+    grid-template-columns: 1fr auto;
+    gap: var(--space-2xs);
+  }
+
   .header-actions {
-    justify-content: flex-start;
-    flex-wrap: wrap;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
   }
 
   .title-input {
     font-size: var(--text-lg);
+    padding: var(--space-2xs);
+  }
+
+  .section-types-row {
+    gap: var(--space-2xs);
   }
 
   .content-textarea {

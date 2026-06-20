@@ -1,5 +1,8 @@
 <template>
-  <div id="book-detail-layout" :class="'mode-' + activePanel">
+  <div
+    id="book-detail-layout"
+    :class="['mode-' + activePanel, { 'sidebar-collapsed': sidebarCollapsed }]"
+  >
     <!-- Top navigation bar (always visible) -->
     <nav id="book-nav">
       <NuxtLink to="/" class="back-link">
@@ -66,14 +69,22 @@
 
     <!-- Sidebar: only for sections -->
     <aside v-if="activePanel === 'sections'" id="sidebar-panel">
-      <SectionTree
-        :root-section="sectionsStore.rootSection"
-        :selected-id="selectedSectionId"
-        :get-children="sectionsStore.getChildren"
-        @select="selectSection"
-        @add-child="addChildSection"
-        @delete="confirmDeleteSection"
-      />
+      <div class="sidebar-toggle" @click="sidebarCollapsed = !sidebarCollapsed">
+        <span>Sections</span>
+        <i
+          :class="sidebarCollapsed ? 'bi bi-chevron-up' : 'bi bi-chevron-down'"
+        />
+      </div>
+      <div v-show="!sidebarCollapsed" class="sidebar-tree">
+        <SectionTree
+          :root-section="sectionsStore.rootSection"
+          :selected-id="selectedSectionId"
+          :get-children="sectionsStore.getChildren"
+          @select="selectSection"
+          @add-child="addChildSection"
+          @delete="confirmDeleteSection"
+        />
+      </div>
     </aside>
 
     <!-- Editor: only for sections -->
@@ -260,6 +271,7 @@ const versionNote = ref("");
 const savingVersion = ref(false);
 const viewingVersionId = ref(null);
 const activePanel = ref("sections");
+const sidebarCollapsed = ref(true);
 const sectionViewMode = ref("section");
 
 // Persist view mode preference per section type
@@ -492,6 +504,11 @@ onMounted(async () => {
     padding-right: var(--space-sm);
   }
 
+  /* Desktop: hide sidebar toggle, always show tree */
+  .sidebar-toggle {
+    display: none;
+  }
+
   #editor-panel {
     grid-area: editor;
     overflow: hidden;
@@ -511,11 +528,20 @@ onMounted(async () => {
    Mobile layout (max-width: 768px)
    ============================================ */
 @media (max-width: 768px) {
-  /* Sections mode: nav, sidebar (30vh), editor (remaining) */
+  #book-detail-layout {
+    gap: var(--space-xs);
+  }
+
+  /* Sections mode: nav, editor, collapsible sidebar at bottom */
   #book-detail-layout.mode-sections {
-    grid-template-rows: auto 1fr 30vh;
+    grid-template-rows: auto 1fr 35vh;
     grid-template-columns: 1fr;
     min-height: 0;
+  }
+
+  /* Collapsed sidebar: just the toggle bar */
+  #book-detail-layout.mode-sections.sidebar-collapsed {
+    grid-template-rows: auto 1fr auto;
   }
 
   /* Other modes: nav, full content */
@@ -527,13 +553,46 @@ onMounted(async () => {
     grid-template-columns: 1fr;
   }
 
+  /* Compact nav on mobile */
+  #book-nav {
+    padding-bottom: var(--space-xs);
+    gap: var(--space-xs);
+  }
+
+  #book-nav h2 {
+    font-size: var(--text-base);
+  }
+
+  .btn-icon {
+    padding: var(--space-3xs, 2px) var(--space-2xs);
+    font-size: var(--text-base);
+  }
+
   #sidebar-panel {
-    overflow: auto;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
     min-height: 0;
     border: 1px solid var(--pico-muted-border-color, #444);
     border-radius: var(--radius-sm, 4px);
-    padding: var(--space-sm);
     background: var(--pico-card-background-color, rgba(255, 255, 255, 0.02));
+  }
+
+  .sidebar-tree {
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    padding: var(--space-xs) var(--space-sm);
+  }
+
+  /* Compact view mode toggle */
+  .view-mode-toggle {
+    padding-bottom: var(--space-2xs);
+  }
+
+  .view-mode-toggle button {
+    padding: var(--space-3xs, 2px) var(--space-xs);
+    font-size: var(--text-xs);
   }
 
   #editor-panel {
@@ -656,5 +715,29 @@ onMounted(async () => {
   color: var(--pico-primary);
   border-color: var(--pico-primary);
   background: var(--pico-primary-background, rgba(16, 149, 193, 0.08));
+}
+
+/* ============================================
+   Sidebar toggle (visible on mobile only)
+   ============================================ */
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-xs) var(--space-sm);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--pico-muted-color);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.sidebar-toggle:hover {
+  color: var(--pico-primary);
+}
+
+.sidebar-toggle i {
+  font-size: var(--text-xs);
 }
 </style>
