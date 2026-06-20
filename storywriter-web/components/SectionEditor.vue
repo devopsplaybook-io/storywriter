@@ -11,16 +11,10 @@
           @keydown.enter="$refs.contentRef?.focus()"
         />
         <div class="header-actions">
-          <select
-            v-if="showTypeSelector"
-            v-model="type"
-            class="type-select"
-            @change="saveType"
-          >
-            <option value="text">Text</option>
-            <option value="container">Container</option>
-            <option value="media">Media</option>
-          </select>
+          <span class="type-badge">
+            <i :class="typeIcon" />
+            {{ section.type }}
+          </span>
         </div>
       </header>
 
@@ -31,7 +25,7 @@
           <button
             v-for="typeName in availableSectionTypes"
             :key="typeName"
-            class="type-badge"
+            class="category-badge"
             :class="{ active: assignedSectionTypes.includes(typeName) }"
             @click="toggleSectionType(typeName)"
           >
@@ -40,12 +34,13 @@
         </div>
       </div>
 
-      <!-- Container section -->
-      <div v-if="section.type === 'container'" class="container-info">
-        <i class="bi bi-folder" />
-        <p>This section contains child sections.</p>
-        <p class="hint">Use the sidebar to add and manage child sections.</p>
-      </div>
+      <!-- Container section: show reorder view -->
+      <SectionReorder
+        v-if="section.type === 'container'"
+        :children="children"
+        :get-children="getChildren"
+        @reorder="(payload) => $emit('reorder', payload)"
+      />
 
       <!-- Media section -->
       <div v-if="section.type === 'media'" class="media-section">
@@ -120,9 +115,11 @@ import { usePropertiesStore } from "../stores/properties";
 const props = defineProps({
   section: { type: Object, default: null },
   mediaList: { type: Array, default: () => [] },
+  children: { type: Array, default: () => [] },
+  getChildren: { type: Function, default: () => () => [] },
 });
 
-const emit = defineEmits(["update"]);
+const emit = defineEmits(["update", "reorder"]);
 
 const mediaStore = useMediaStore();
 const propertiesStore = usePropertiesStore();
@@ -130,18 +127,22 @@ const propertiesStore = usePropertiesStore();
 const contentRef = ref(null);
 const tab = ref("edit");
 
-const type = ref("text");
-const title = ref("");
 const content = ref("");
 const selectedMediaId = ref(null);
 const caption = ref("");
 
-const showTypeSelector = computed(() => {
-  if (!props.section) return false;
-  return true;
+const title = ref("");
+const typeIcon = computed(() => {
+  switch (props.section?.type) {
+    case "container":
+      return "bi bi-folder";
+    case "media":
+      return "bi bi-image";
+    default:
+      return "bi bi-file-text";
+  }
 });
 
-// Section types
 const availableSectionTypes = computed(() => {
   const prop = propertiesStore.sectionTypeProperty;
   return prop ? prop.options : [];
@@ -171,22 +172,44 @@ const mediaUrl = computed(() => {
 
 const renderedContent = computed(() => {
   if (!content.value) return "<p class='empty-hint'>No content yet.</p>";
-  return marked(content.value, { breaks: true });
+  return renderMarkdown(content.value, props.section?.bookId);
 });
 
 const renderedCaption = computed(() => {
   if (!caption.value) return "";
-  return marked(caption.value, { breaks: true });
+  return renderMarkdown(caption.value, props.section?.bookId);
 });
+
+function renderMarkdown(content, bookId) {
+  if (!content) return "";
+  const renderer = new marked.Renderer();
+  renderer.image = ({ href, text }) => {
+    if (!href) return "";
+    if (/^(https?:\/\/|data:)/.test(href)) {
+      return `<img src="${href}" alt="${text || ""}" />`;
+    }
+    if (!bookId) {
+      return `<img src="${href}" alt="${text || ""}" />`;
+    }
+    const slug = href.replace(/\.[^/.]+$/, "");
+    const media =
+      mediaStore.getMediaBySlug(bookId, slug) ||
+      mediaStore.getMediaBySlug(bookId, href);
+    if (media) {
+      const url = mediaStore.getMediaUrl(bookId, media.id);
+      return `<img src="${url}" alt="${text || ""}" />`;
+    }
+    return `<img src="${href}" alt="${text || ""}" />`;
+  };
+  return marked(content, { breaks: true, renderer });
+}
 
 watch(
   () => props.section?.id,
   async () => {
     if (props.section) {
-      type.value = props.section.type || "text";
       title.value = props.section.title || "";
       content.value = props.section.content || "";
-
       selectedMediaId.value = props.section.mediaId || null;
       caption.value = props.section.caption || "";
       // Fetch section values for section types
@@ -195,11 +218,6 @@ watch(
   },
   { immediate: true },
 );
-
-function saveType() {
-  if (!props.section || type.value === (props.section.type || "text")) return;
-  emit("update", { type: type.value });
-}
 
 function saveTitle() {
   if (!props.section || title.value === (props.section.title || "")) return;
@@ -231,7 +249,7 @@ function saveCaption() {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
-  height: 100%;
+  flex: 1;
   min-height: 0;
 }
 
@@ -255,7 +273,7 @@ function saveCaption() {
   gap: var(--space-2xs);
 }
 
-.type-badge {
+.category-badge {
   padding: var(--space-2xs) var(--space-xs);
   font-size: var(--text-sm);
   background: transparent;
@@ -266,12 +284,12 @@ function saveCaption() {
   transition: all var(--transition-fast);
 }
 
-.type-badge:hover {
+.category-badge:hover {
   border-color: var(--pico-primary);
   color: var(--pico-primary);
 }
 
-.type-badge.active {
+.category-badge.active {
   background: var(--pico-primary-background, rgba(16, 149, 193, 0.15));
   border-color: var(--pico-primary);
   color: var(--pico-primary);
@@ -304,13 +322,17 @@ function saveCaption() {
   align-items: center;
 }
 
-.type-select {
-  font-size: var(--text-sm);
+.type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
   padding: var(--space-2xs) var(--space-xs);
-  border: 1px solid var(--pico-muted-border-color, #444);
   border-radius: var(--radius-sm, 4px);
-  background: transparent;
-  cursor: pointer;
+  background: var(--pico-muted-border-color, #333);
+  color: var(--pico-muted-color, #aaa);
+  text-transform: capitalize;
+  white-space: nowrap;
 }
 
 .btn-icon {
@@ -326,32 +348,6 @@ function saveCaption() {
 .btn-icon:hover {
   border-color: var(--pico-muted-border-color, #444);
   color: var(--pico-primary);
-}
-
-.container-info {
-  display: grid;
-  place-items: center;
-  padding: var(--space-xl);
-  text-align: center;
-  color: var(--pico-muted-color);
-  border: 1px solid var(--pico-muted-border-color, #444);
-  border-radius: var(--radius-sm, 4px);
-  background: var(--pico-card-background-color, rgba(255, 255, 255, 0.02));
-  flex: 1;
-}
-
-.container-info i {
-  font-size: var(--text-icon, 3rem);
-  margin-bottom: var(--space-sm);
-}
-
-.container-info p {
-  margin: var(--space-xs) 0;
-}
-
-.container-info .hint {
-  font-size: var(--text-sm);
-  opacity: 0.7;
 }
 
 .media-section {

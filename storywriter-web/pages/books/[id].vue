@@ -80,10 +80,60 @@
     <main v-if="activePanel === 'sections'" id="editor-panel">
       <div v-if="loading" class="loading-indicator" />
       <template v-else-if="book">
+        <!-- View mode toggle for container sections -->
+        <div
+          v-if="currentSection?.type === 'container'"
+          class="view-mode-toggle"
+        >
+          <button
+            :class="{ active: sectionViewMode === 'section' }"
+            title="Section view — edit this section"
+            @click="sectionViewMode = 'section'"
+          >
+            <i class="bi bi-layout-text-sidebar" /> Section
+          </button>
+          <button
+            :class="{ active: sectionViewMode === 'recursive-view' }"
+            title="Recursive view — read all sub-sections"
+            @click="sectionViewMode = 'recursive-view'"
+          >
+            <i class="bi bi-list-task" /> View
+          </button>
+          <button
+            :class="{ active: sectionViewMode === 'recursive-edit' }"
+            title="Recursive edit — edit all sub-sections"
+            @click="sectionViewMode = 'recursive-edit'"
+          >
+            <i class="bi bi-pencil-square" /> Edit
+          </button>
+        </div>
+
+        <!-- Section view: editor (with reorder for containers) -->
         <SectionEditor
+          v-if="sectionViewMode === 'section'"
           :section="currentSection"
           :media-list="mediaList"
+          :children="currentSectionChildren"
+          :get-children="sectionsStore.getChildren"
           @update="updateSection"
+          @reorder="handleReorderChildren"
+        />
+
+        <!-- Recursive view: read-only nested content -->
+        <SectionRecursiveView
+          v-else-if="sectionViewMode === 'recursive-view'"
+          :section="currentSection"
+          :get-children="sectionsStore.getChildren"
+          mode="view"
+        />
+
+        <!-- Recursive edit: editable nested content -->
+        <SectionRecursiveView
+          v-else-if="sectionViewMode === 'recursive-edit'"
+          :section="currentSection"
+          :get-children="sectionsStore.getChildren"
+          mode="edit"
+          @update-section="handleRecursiveUpdateSection"
         />
       </template>
       <div v-else class="not-found">
@@ -210,6 +260,17 @@ const versionNote = ref("");
 const savingVersion = ref(false);
 const viewingVersionId = ref(null);
 const activePanel = ref("sections");
+const sectionViewMode = ref("section");
+
+// Persist view mode preference per section type
+watch(sectionViewMode, (mode) => {
+  if (currentSection.value) {
+    localStorage.setItem(
+      `storywriter.viewMode.${currentSection.value.type}`,
+      mode,
+    );
+  }
+});
 const deleteSectionTarget = ref(null);
 
 const mediaList = computed(() => {
@@ -226,6 +287,11 @@ const currentSection = computed(() => {
   return (
     sectionsStore.sections.find((s) => s.id === selectedSectionId.value) || null
   );
+});
+
+const currentSectionChildren = computed(() => {
+  if (!currentSection.value) return [];
+  return sectionsStore.getChildren(currentSection.value.id);
 });
 
 async function loadBook() {
@@ -249,15 +315,25 @@ async function loadBook() {
 
 function selectSection(id) {
   selectedSectionId.value = id;
+  // Restore saved view mode preference for this section type
+  const section = sectionsStore.sections.find((s) => s.id === id);
+  if (section) {
+    const saved = localStorage.getItem(`storywriter.viewMode.${section.type}`);
+    sectionViewMode.value = saved || "section";
+  } else {
+    sectionViewMode.value = "section";
+  }
 }
 
-async function addChildSection(parentId) {
+async function addChildSection(parentId, type = "text") {
+  const parent = sectionsStore.sections.find((s) => s.id === parentId);
+  if (!parent || parent.type !== "container") return;
   try {
     const children = sectionsStore.getChildren(parentId);
     const section = await sectionsStore.create(
       book.value.id,
       parentId,
-      "text",
+      type,
       "New Section",
       children.length,
     );
@@ -271,6 +347,35 @@ async function updateSection(data) {
   if (!selectedSectionId.value) return;
   try {
     await sectionsStore.update(selectedSectionId.value, data);
+  } catch {
+    // silent
+  }
+}
+
+async function handleReorderChildren({ sourceIndex, targetIndex }) {
+  if (!currentSection.value) return;
+  const children = [...currentSectionChildren.value];
+  if (sourceIndex < 0 || sourceIndex >= children.length) return;
+  if (targetIndex < 0 || targetIndex >= children.length) return;
+  // Move the item
+  const [moved] = children.splice(sourceIndex, 1);
+  children.splice(targetIndex, 0, moved);
+  // Update orderIndex for all affected children
+  try {
+    for (let i = 0; i < children.length; i++) {
+      if (children[i].orderIndex !== i) {
+        await sectionsStore.reorder(children[i].id, i);
+      }
+    }
+  } catch {
+    // silent — refetch if needed
+    await sectionsStore.fetchByBook(book.value.id);
+  }
+}
+
+async function handleRecursiveUpdateSection({ sectionId, data }) {
+  try {
+    await sectionsStore.update(sectionId, data);
   } catch {
     // silent
   }
@@ -389,7 +494,10 @@ onMounted(async () => {
 
   #editor-panel {
     grid-area: editor;
-    overflow-y: auto;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
   }
 
   #panel-content {
@@ -429,7 +537,7 @@ onMounted(async () => {
   }
 
   #editor-panel {
-    overflow-y: auto;
+    overflow: hidden;
     min-height: 0;
     display: flex;
     flex-direction: column;
@@ -512,5 +620,41 @@ onMounted(async () => {
 
 .not-found i {
   font-size: var(--text-icon, 3rem);
+}
+
+/* ============================================
+   View mode toggle
+   ============================================ */
+.view-mode-toggle {
+  display: flex;
+  gap: var(--space-2xs);
+  border-bottom: 1px solid var(--pico-muted-border-color, #444);
+  padding-bottom: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.view-mode-toggle button {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  padding: var(--space-2xs) var(--space-sm);
+  font-size: var(--text-sm);
+  color: var(--pico-muted-color);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  white-space: nowrap;
+}
+
+.view-mode-toggle button:hover {
+  border-color: var(--pico-muted-border-color, #444);
+  color: var(--pico-primary);
+}
+
+.view-mode-toggle button.active {
+  color: var(--pico-primary);
+  border-color: var(--pico-primary);
+  background: var(--pico-primary-background, rgba(16, 149, 193, 0.08));
 }
 </style>

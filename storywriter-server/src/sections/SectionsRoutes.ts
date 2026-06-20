@@ -118,6 +118,17 @@ export class SectionsRoutes {
     fastify.post<PostSection>("/", async (req, res) => {
       if (!(await checkBookAccess(req, res, req.body.bookId, "write"))) return;
 
+      // Only container sections can have children
+      const parent = await SectionsDataGet(req.body.parentId);
+      if (!parent) {
+        return res.status(404).send({ error: "Parent Section Not Found" });
+      }
+      if (parent.type !== "container") {
+        return res
+          .status(400)
+          .send({ error: "Only container sections can have sub-sections" });
+      }
+
       const section = new Section();
       section.bookId = req.body.bookId;
       section.parentId = req.body.parentId;
@@ -135,7 +146,6 @@ export class SectionsRoutes {
     interface PutSection extends RequestGenericInterface {
       Params: { id: string };
       Body: {
-        type?: SectionType;
         title?: string;
         content?: string;
         analysis?: string;
@@ -150,7 +160,6 @@ export class SectionsRoutes {
       }
       if (!(await checkBookAccess(req, res, section.bookId, "write"))) return;
 
-      if (req.body.type !== undefined) section.type = req.body.type;
       if (req.body.title !== undefined) section.title = req.body.title;
       if (req.body.content !== undefined) section.content = req.body.content;
       if (req.body.mediaId !== undefined) section.mediaId = req.body.mediaId;
@@ -185,6 +194,20 @@ export class SectionsRoutes {
         return res.status(404).send({ error: "Section Not Found" });
       }
       if (!(await checkBookAccess(req, res, section.bookId, "write"))) return;
+
+      // Only container sections can have children
+      const targetParent = await SectionsDataGet(req.body.parentId);
+      if (!targetParent) {
+        return res
+          .status(404)
+          .send({ error: "Target Parent Section Not Found" });
+      }
+      if (targetParent.type !== "container") {
+        return res
+          .status(400)
+          .send({ error: "Can only move sections into containers" });
+      }
+
       await SectionsDataMove(
         req.params.id,
         req.body.parentId,
@@ -204,6 +227,20 @@ export class SectionsRoutes {
         return res.status(404).send({ error: "Section Not Found" });
       }
       if (!(await checkBookAccess(req, res, section.bookId, "write"))) return;
+
+      // Only container sections can have children
+      const targetParent = await SectionsDataGet(req.body.targetParentId);
+      if (!targetParent) {
+        return res
+          .status(404)
+          .send({ error: "Target Parent Section Not Found" });
+      }
+      if (targetParent.type !== "container") {
+        return res
+          .status(400)
+          .send({ error: "Can only copy sections into containers" });
+      }
+
       const copy = await SectionsDataCopy(
         req.params.id,
         req.body.targetParentId,

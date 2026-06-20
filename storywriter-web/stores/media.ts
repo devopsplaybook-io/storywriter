@@ -26,6 +26,10 @@ export const useMediaStore = defineStore("media", {
       }
       return null;
     },
+    getMediaBySlug: (state) => (bookId: string, slug: string) => {
+      const list = state.mediaByBook[bookId] || [];
+      return list.find((m) => m.slug === slug) || null;
+    },
   },
 
   actions: {
