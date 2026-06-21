@@ -139,6 +139,7 @@
 import { marked } from "marked";
 import {
   computed,
+  nextTick,
   onBeforeUnmount,
   onMounted,
   reactive,
@@ -266,6 +267,15 @@ function autoResize(el) {
   el.style.height = el.scrollHeight + "px";
 }
 
+function autoResizeAllTextareas() {
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      const textareas = document.querySelectorAll(".edit-content-textarea");
+      textareas.forEach((ta) => autoResize(ta));
+    });
+  });
+}
+
 function onContentInput(item, event) {
   autoResize(event.target);
 }
@@ -313,6 +323,11 @@ watch(
     setupObserver();
   },
 );
+
+// Re-run autoResize when new sections become visible (lazy loading)
+watch(visibleSections, () => {
+  autoResizeAllTextareas();
+});
 
 onMounted(() => {
   setupObserver();
