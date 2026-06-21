@@ -1,10 +1,37 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
   <!-- Background rounded rectangle -->
   <rect x="2.5" y="2.5" width="95" height="95" rx="20" fill="#015887" stroke="#014c75" stroke-width="5"/>
-  <!-- Quill feather -->
-  <path d="M70 18 C55 28, 45 38, 30 65 C28 69, 32 66, 36 62 C42 55, 48 48, 52 42 C46 52, 38 64, 33 72 C31 76, 36 73, 40 69 C47 60, 54 50, 58 43 C52 54, 44 66, 39 74 C37 78, 42 75, 46 71 C54 62, 61 50, 65 40 C60 52, 52 64, 47 72 C45 76, 50 73, 53 69 C60 58, 66 44, 68 32 Z" fill="white" opacity="0.95"/>
-  <!-- Quill shaft / nib -->
-  <path d="M30 65 L22 82" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" opacity="0.95"/>
-  <!-- Ink dot -->
-  <circle cx="22" cy="82" r="2.5" fill="white" opacity="0.95"/>
+
+  <!-- Feather vane: smooth leaf-shaped body tapering at both ends -->
+  <path d="M74 15
+           C66 16, 54 20, 44 27
+           C36 34, 30 44, 27 53
+           C25 60, 28 63, 33 65
+           C36 62, 40 56, 45 49
+           C52 40, 60 28, 68 20
+           C71 17, 73 16, 74 15 Z"
+        fill="white" opacity="0.95"/>
+
+  <!-- Barbs: fine lines sweeping from shaft toward the feather edge -->
+  <g fill="none" stroke="#015887" stroke-width="0.8" opacity="0.22" stroke-linecap="round">
+    <path d="M68 22 Q63 18, 58 18"/>
+    <path d="M62 28 Q55 24, 48 24"/>
+    <path d="M56 34 Q48 30, 40 30"/>
+    <path d="M50 40 Q42 36, 34 36"/>
+    <path d="M44 46 Q37 43, 31 43"/>
+    <path d="M38 52 Q32 50, 28 50"/>
+    <path d="M35 58 Q30 57, 27 57"/>
+  </g>
+
+  <!-- Central shaft (rachis) running through the feather -->
+  <line x1="72" y1="17" x2="34" y2="63" stroke="#015887" stroke-width="1" stroke-linecap="round" opacity="0.2"/>
+
+  <!-- Bare shaft (calamus) below the feather -->
+  <line x1="33" y1="65" x2="28" y2="80" stroke="white" stroke-width="2.5" stroke-linecap="round" opacity="0.95"/>
+
+  <!-- Writing nib -->
+  <path d="M28 80 L23 87 L26 82 Z" fill="white" opacity="0.95"/>
+
+  <!-- Ink drop -->
+  <circle cx="22" cy="88" r="1.8" fill="white" opacity="0.7"/>
 </svg>
