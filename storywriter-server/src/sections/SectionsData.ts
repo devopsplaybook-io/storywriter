@@ -57,6 +57,7 @@ export async function SectionsDataAddRootSection(
   const section = new Section();
   section.bookId = bookId;
   section.parentId = null;
+  section.type = "container";
   section.title = "Root";
   section.orderIndex = 0;
   await DbUtilsExecSQL(SQL_QUERIES.INSERT_SECTION[DbUtilsGetType()], [

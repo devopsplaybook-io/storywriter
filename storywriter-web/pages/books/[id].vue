@@ -259,6 +259,7 @@ import { useMediaStore } from "../../stores/media";
 import { usePropertiesStore } from "../../stores/properties";
 
 const route = useRoute();
+const router = useRouter();
 const booksStore = useBooksStore();
 const sectionsStore = useSectionsStore();
 const mediaStore = useMediaStore();
@@ -346,9 +347,15 @@ async function loadBook() {
     await sectionsStore.fetchByBook(bookId);
     await mediaStore.fetchMedia(bookId);
     await propertiesStore.fetchByBook(bookId);
-    // Auto-select root section
-    if (sectionsStore.rootSection) {
-      selectedSectionId.value = sectionsStore.rootSection.id;
+    // Restore section from URL query param, or fall back to root
+    const sectionFromUrl = route.query.section;
+    if (
+      sectionFromUrl &&
+      sectionsStore.sections.find((s) => s.id === sectionFromUrl)
+    ) {
+      selectSection(sectionFromUrl);
+    } else if (sectionsStore.rootSection) {
+      selectSection(sectionsStore.rootSection.id);
     }
   } catch {
     book.value = null;
@@ -359,6 +366,14 @@ async function loadBook() {
 
 function selectSection(id) {
   selectedSectionId.value = id;
+  // Sync section ID to URL query parameter
+  const query = { ...route.query };
+  if (id) {
+    query.section = id;
+  } else {
+    delete query.section;
+  }
+  router.replace({ query });
   // Restore saved view mode preference for this section type
   const section = sectionsStore.sections.find((s) => s.id === id);
   if (section) {
@@ -381,7 +396,7 @@ async function addChildSection(parentId, type = "text") {
       "New Section",
       children.length,
     );
-    selectedSectionId.value = section.id;
+    selectSection(section.id);
   } catch {
     // silent
   }
@@ -470,7 +485,7 @@ async function deleteSection() {
   try {
     await sectionsStore.remove(deleteSectionTarget.value);
     if (selectedSectionId.value === deleteSectionTarget.value) {
-      selectedSectionId.value = sectionsStore.rootSection?.id || null;
+      selectSection(sectionsStore.rootSection?.id || null);
     }
     deleteSectionTarget.value = null;
   } catch {

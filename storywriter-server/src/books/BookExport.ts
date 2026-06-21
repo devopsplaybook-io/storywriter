@@ -238,6 +238,10 @@ export async function BookImportRun(
           ? sectionIdMap.get(sec.parentId) || null
           : null;
         section.type = sec.type || "text";
+        // Root section must always be a container
+        if (!section.parentId) {
+          section.type = "container";
+        }
         section.title = sec.title || "";
         section.content = sec.content || "";
         section.mediaId = sec.mediaId
