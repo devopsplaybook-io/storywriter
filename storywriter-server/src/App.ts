@@ -28,6 +28,7 @@ import { BookAttributesRoutes } from "./attributes/BookAttributesRoutes";
 import { BookAnalysisInit } from "./analysis/BookAnalysis";
 import { BookAnalysisRoutes } from "./analysis/BookAnalysisRoutes";
 import { MediaRoutes } from "./media/MediaRoutes";
+import { LegacyMetadataMigrate } from "./utils/LegacyMetadata";
 
 import fastifyCompress from "@fastify/compress";
 import fastifyMultipart from "@fastify/multipart";
@@ -52,6 +53,10 @@ Promise.resolve().then(async () => {
   DbUtilsSetOTel(OTelTracer(), OTelLogger());
 
   const span = OTelTracer().startSpan("init");
+
+  // Convert pre-v0.2.0 metadata table (key/value) to the common-utils schema
+  // (type/value/dateCreated) before DbUtilsInit queries it.
+  await LegacyMetadataMigrate(config);
 
   // Initialize database (runs migrations automatically)
   await DbUtilsInit(
