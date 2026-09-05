@@ -1,8 +1,8 @@
 import { FastifyInstance, RequestGenericInterface } from "fastify";
 import { promises as fs } from "fs-extra";
 import * as path from "path";
+import { AuthGetUserSession } from "@devopsplaybook.io/common-utils";
 import { Config } from "../Config";
-import { AuthGetUserSession } from "../users/Auth";
 import { BooksDataGetUserAccess } from "../books/BooksData";
 import {
   MediaDataList,

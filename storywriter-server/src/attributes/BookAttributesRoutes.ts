@@ -1,6 +1,6 @@
 import { FastifyInstance, RequestGenericInterface } from "fastify";
+import { AuthGetUserSession } from "@devopsplaybook.io/common-utils";
 import { BookAttribute } from "../model/BookAttribute";
-import { AuthGetUserSession } from "../users/Auth";
 import { BooksDataGetUserAccess } from "../books/BooksData";
 import {
   BookAttributesDataAdd,

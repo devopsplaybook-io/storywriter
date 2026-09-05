@@ -1,6 +1,6 @@
 import { FastifyInstance, RequestGenericInterface } from "fastify";
+import { AuthGetUserSession } from "@devopsplaybook.io/common-utils";
 import { Section, SectionType } from "../model/Section";
-import { AuthGetUserSession } from "../users/Auth";
 import { BooksDataGetUserAccess } from "../books/BooksData";
 import {
   SectionsDataAdd,

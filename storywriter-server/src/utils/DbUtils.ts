@@ -1,94 +1,99 @@
-import { Config } from "../Config";
+import { Span } from "@opentelemetry/sdk-trace-base";
+import {
+  DbUtilsSetOTel as _DbUtilsSetOTel,
+  DbUtilsInit as _DbUtilsInit,
+  DbUtilsGetDatabase as _DbUtilsGetDatabase,
+  convertToPostgresPlaceholders as _convertToPostgresPlaceholders,
+  DbUtilsExecSQL as _DbUtilsExecSQL,
+  DbUtilsQuerySQL as _DbUtilsQuerySQL,
+  DbUtilsGetType as _DbUtilsGetType,
+} from "@devopsplaybook.io/common-utils";
 
-let databaseType: "sqlite" | "postgres" = "sqlite";
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let database: any = null;
+// Re-export functions that don't need wrapping
+export const DbUtilsSetOTel = _DbUtilsSetOTel;
+export const DbUtilsInit = _DbUtilsInit;
+export const DbUtilsGetDatabase = _DbUtilsGetDatabase;
+export const convertToPostgresPlaceholders = _convertToPostgresPlaceholders;
+export const DbUtilsGetType = _DbUtilsGetType;
 
-export async function DbUtilsInit(config: Config): Promise<void> {
-  databaseType = config.DATABASE_TYPE as "sqlite" | "postgres";
-  if (databaseType === "postgres") {
-    const { Pool } = await import("pg");
-    database = new Pool({
-      host: process.env.DATABASE_POSTGRES_HOST || "localhost",
-      port: parseInt(process.env.DATABASE_POSTGRES_PORT || "5432"),
-      user: process.env.DATABASE_POSTGRES_USER || "storywriter",
-      password: process.env.DATABASE_POSTGRES_PASSWORD || "storywriter",
-      database: process.env.DATABASE_POSTGRES_DATABASE || "storywriter",
-    });
-    await database.query("SELECT 1");
-  } else {
-    const Database = (await import("better-sqlite3")).default;
-    database = new Database(`${config.DATA_DIR}/database.db`);
-    database.pragma("journal_mode = WAL");
-  }
-}
-
-export function DbUtilsInitGetDatabase() {
-  return database;
-}
-
-/** Convert SQLite ? placeholders to PostgreSQL $1, $2, ... numbering */
-export function convertToPostgresPlaceholders(sql: string): string {
-  let paramIndex = 1;
-  return sql.replace(/\?/g, () => `$${paramIndex++}`);
-}
-
+/**
+ * Backward-compatible wrapper for DbUtilsExecSQL.
+ * Accepts optional context parameter for OTel tracing.
+ */
 export function DbUtilsExecSQL(
   sql: string,
-  params: unknown[] = [],
+  params?: unknown[],
+): Promise<number>;
+export function DbUtilsExecSQL(
+  context: Span | undefined,
+  sql: string,
+  params?: unknown[],
+): Promise<number>;
+export function DbUtilsExecSQL(
+  contextOrSql: Span | undefined | string,
+  sqlOrParams?: string | unknown[],
+  params?: unknown[],
 ): Promise<number> {
-  if (databaseType === "postgres") {
-    return new Promise((resolve, reject) => {
-      database.query(
-        convertToPostgresPlaceholders(sql),
-        params,
-        (error: Error, result: { rowCount: number }) => {
-          if (error) {
-            reject(error);
-          } else {
-            resolve(result.rowCount || 0);
-          }
-        },
-      );
-    });
-  } else {
-    const stmt = database.prepare(sql);
-    const result = stmt.run(...params);
-    return Promise.resolve(result.changes);
+  // Detect if first argument is a string (old signature) or Span/undefined (new signature)
+  if (typeof contextOrSql === "string") {
+    // Old signature: DbUtilsExecSQL(sql, params)
+    return Promise.resolve(
+      _DbUtilsExecSQL(undefined, contextOrSql, sqlOrParams as unknown[]),
+    );
   }
+  // New signature: DbUtilsExecSQL(context, sql, params)
+  return Promise.resolve(
+    _DbUtilsExecSQL(
+      contextOrSql,
+      sqlOrParams as string,
+      params as unknown[],
+    ),
+  );
 }
 
+/**
+ * Backward-compatible wrapper for DbUtilsQuerySQL.
+ * Accepts optional context parameter for OTel tracing.
+ */
 export function DbUtilsQuerySQL(
   sql: string,
-  params: unknown[] = [],
-  debug = false,
+  params?: unknown[],
+  debug?: boolean,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any[]>;
+export function DbUtilsQuerySQL(
+  context: Span | undefined,
+  sql: string,
+  params?: unknown[],
+  debug?: boolean,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any[]>;
+export function DbUtilsQuerySQL(
+  contextOrSql: Span | undefined | string,
+  sqlOrParams?: string | unknown[],
+  paramsOrDebug?: unknown[] | boolean,
+  debug?: boolean,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any[]> {
-  if (debug) {
-    console.log(sql);
+  // Detect if first argument is a string (old signature) or Span/undefined (new signature)
+  if (typeof contextOrSql === "string") {
+    // Old signature: DbUtilsQuerySQL(sql, params, debug)
+    return Promise.resolve(
+      _DbUtilsQuerySQL(
+        undefined,
+        contextOrSql,
+        sqlOrParams as unknown[],
+        paramsOrDebug as boolean,
+      ),
+    );
   }
-  if (databaseType === "postgres") {
-    const convertedSql = convertToPostgresPlaceholders(sql);
-    return new Promise((resolve, reject) => {
-      database.query(
-        convertedSql,
-        params,
-        (error: Error, result: { rows: unknown[] }) => {
-          if (error) {
-            reject(error);
-          } else {
-            resolve(result.rows);
-          }
-        },
-      );
-    });
-  } else {
-    const stmt = database.prepare(sql);
-    const rows = stmt.all(...params);
-    return Promise.resolve(rows);
-  }
-}
-
-export function DbUtilsGetType(): "sqlite" | "postgres" {
-  return databaseType;
+  // New signature: DbUtilsQuerySQL(context, sql, params, debug)
+  return Promise.resolve(
+    _DbUtilsQuerySQL(
+      contextOrSql,
+      sqlOrParams as string,
+      paramsOrDebug as unknown[],
+      debug,
+    ),
+  );
 }

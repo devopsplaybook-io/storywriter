@@ -26,7 +26,6 @@
             <tr>
               <th>Name</th>
               <th>Role</th>
-              <th>Created</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -43,7 +42,6 @@
                   <option value="admin">Admin</option>
                 </select>
               </td>
-              <td>{{ formatDate(user.dateCreated) }}</td>
               <td>
                 <button
                   v-if="user.id !== authStore.currentUser?.id"
@@ -151,11 +149,6 @@ const deleting = ref(false);
 const deleteTarget = ref(null);
 
 const newUser = ref({ name: "", password: "", role: "user" });
-
-function formatDate(dateStr) {
-  if (!dateStr) return "";
-  return new Date(dateStr).toLocaleDateString();
-}
 
 async function fetchUsers() {
   loading.value = true;
