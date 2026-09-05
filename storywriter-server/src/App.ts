@@ -1,18 +1,26 @@
+import { StandardMeter, StandardTracer } from "@devopsplaybook.io/otel-utils";
+import { StandardTracerFastifyRegisterHooks } from "@devopsplaybook.io/otel-utils-fastify";
 import fastifyCors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
-import { watchFile, promises as fs } from "fs-extra";
+import { watchFile } from "fs-extra";
 import * as path from "path";
 import { Config } from "./Config";
 import {
+  OTelLogger,
+  OTelSetMeter,
+  OTelSetTracer,
+  OTelTracer,
+} from "./OTelContext";
+import {
+  AuthInit,
+  AuthSetOTel,
   DbUtilsInit,
-  DbUtilsExecSQL,
-  DbUtilsGetType,
-  DbUtilsQuerySQL,
-} from "./utils/DbUtils";
-import { AuthInit } from "./users/Auth";
-import { UsersRoutes } from "./users/UsersRoutes";
-import { UsersDataList } from "./users/UsersData";
+  DbUtilsSetOTel,
+  UsersDataSetOTel,
+  UsersRoutes,
+} from "@devopsplaybook.io/common-utils";
+import { ApiTokensRoutes } from "./users/ApiTokensRoutes";
 import { BooksRoutes } from "./books/BooksRoutes";
 import { SectionsRoutes } from "./sections/SectionsRoutes";
 import { PropertiesRoutes } from "./properties/PropertiesRoutes";
@@ -24,55 +32,9 @@ import { MediaRoutes } from "./media/MediaRoutes";
 import fastifyCompress from "@fastify/compress";
 import fastifyMultipart from "@fastify/multipart";
 
-const logger = console;
+const logger = OTelLogger().createModuleLogger("app");
 
 logger.info("====== Starting Storywriter Server ======");
-
-async function runMigrations(): Promise<void> {
-  const dbType = DbUtilsGetType();
-  const migrationsDir = path.join(__dirname, `../sql/${dbType}`);
-
-  // Ensure metadata table exists for tracking migrations
-  await DbUtilsExecSQL(
-    `CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT)`,
-    [],
-  );
-
-  // Get already applied migrations
-  const rows = await DbUtilsQuerySQL(
-    "SELECT value FROM metadata WHERE key = 'migrations'",
-    [],
-  );
-  const applied: string[] =
-    rows.length > 0 && rows[0].value ? JSON.parse(rows[0].value) : [];
-
-  // Read and apply new migrations in order
-  const files = (await fs.readdir(migrationsDir))
-    .filter((f: string) => f.endsWith(".sql"))
-    .sort();
-
-  for (const file of files) {
-    if (!applied.includes(file)) {
-      const sql = await fs.readFile(path.join(migrationsDir, file), "utf-8");
-      logger.info(`Running migration: ${file}`);
-      // Split by semicolons and execute each statement
-      const statements = sql
-        .split(";")
-        .map((s: string) => s.trim())
-        .filter((s: string) => s.length > 0);
-      for (const stmt of statements) {
-        await DbUtilsExecSQL(stmt, []);
-      }
-      applied.push(file);
-    }
-  }
-
-  // Save applied migrations
-  await DbUtilsExecSQL(
-    "INSERT OR REPLACE INTO metadata (key, value) VALUES ('migrations', ?)",
-    [JSON.stringify(applied)],
-  );
-}
 
 Promise.resolve().then(async () => {
   //
@@ -83,11 +45,29 @@ Promise.resolve().then(async () => {
     config.reload();
   });
 
-  // Initialize database and auth
-  await DbUtilsInit(config);
-  await AuthInit(config);
+  OTelSetTracer(new StandardTracer(config));
+  OTelSetMeter(new StandardMeter(config));
+  OTelLogger().initOTel(config);
+
+  DbUtilsSetOTel(OTelTracer(), OTelLogger());
+
+  const span = OTelTracer().startSpan("init");
+
+  // Initialize database (runs migrations automatically)
+  await DbUtilsInit(
+    span,
+    config,
+    path.join(__dirname, `../sql/${config.DATABASE_TYPE}`),
+  );
+
+  // Initialize auth (loads/generates JWT key from metadata table)
+  AuthSetOTel(OTelTracer());
+  UsersDataSetOTel(OTelTracer());
+  await AuthInit(span, config, []);
+
   await BookAnalysisInit(config);
-  await runMigrations();
+
+  span.end();
 
   // APIs
 
@@ -116,24 +96,23 @@ Promise.resolve().then(async () => {
     });
   }
 
+  StandardTracerFastifyRegisterHooks(fastify, OTelTracer(), OTelLogger(), {
+    ignoreList: ["GET-/api/status"],
+  });
+
   fastify.get("/api/status", async () => {
     return { started: true };
   });
 
-  fastify.get("/api/status/initialization", async (req, res) => {
-    if ((await UsersDataList()).length === 0) {
-      return res.status(200).send({ initialized: false });
-    }
-    return res.status(200).send({ initialized: true });
+  // Register common-utils users routes (session, CRUD, password)
+  fastify.register(new UsersRoutes().getRoutes, {
+    prefix: "/api/users",
   });
 
-  // Register API routes
-  await fastify.register(
-    async (instance) => {
-      await new UsersRoutes().getRoutes(instance);
-    },
-    { prefix: "/api/users" },
-  );
+  // Register API tokens routes (extends /api/users with /tokens endpoints)
+  fastify.register(new ApiTokensRoutes(config).getRoutes, {
+    prefix: "/api/users",
+  });
 
   await fastify.register(
     async (instance) => {
