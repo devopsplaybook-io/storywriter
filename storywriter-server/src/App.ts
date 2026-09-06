@@ -115,9 +115,12 @@ Promise.resolve().then(async () => {
   });
 
   // Register API tokens routes (extends /api/users with /tokens endpoints)
-  fastify.register(new ApiTokensRoutes(config).getRoutes, {
-    prefix: "/api/users",
-  });
+  await fastify.register(
+    async (instance) => {
+      await new ApiTokensRoutes(config).getRoutes(instance);
+    },
+    { prefix: "/api/users" },
+  );
 
   await fastify.register(
     async (instance) => {
