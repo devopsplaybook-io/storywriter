@@ -10,9 +10,6 @@
     >
       <i :class="sectionIcon" />
       <span class="tree-label">{{ section.title || "Untitled" }}</span>
-      <span v-if="sectionTypeBadge" class="tree-type-badge">
-        {{ sectionTypeBadge }}
-      </span>
       <span class="tree-actions">
         <span v-if="section.type === 'container'" class="add-child-wrap">
           <i
@@ -38,6 +35,7 @@
           @click.stop="$emit('delete', section.id)"
         />
       </span>
+      <span class="tree-type-label">{{ sectionTypeLabel }}</span>
     </div>
     <div v-if="hasChildren" class="tree-children">
       <SectionTreeNode
@@ -101,9 +99,19 @@ const sectionIcon = computed(() => {
   }
 });
 
-const sectionTypeBadge = computed(() => {
+const sectionTypeLabel = computed(() => {
   const types = propertiesStore.getSectionTypes(props.section.id);
-  return types.length > 0 ? types[0] : null;
+  if (types.length > 0) return types[0];
+  // Fallback to structural type
+  const type = props.section.type || "text";
+  switch (type) {
+    case "container":
+      return "folder";
+    case "media":
+      return "media";
+    default:
+      return "text";
+  }
 });
 </script>
 
@@ -134,14 +142,16 @@ const sectionTypeBadge = computed(() => {
   white-space: nowrap;
 }
 
-.tree-type-badge {
-  font-size: var(--text-2xs, 0.7rem);
-  padding: 0 var(--space-2xs);
-  border-radius: var(--radius-sm, 4px);
-  background: var(--pico-primary-background, rgba(16, 149, 193, 0.15));
-  border: 1px solid var(--pico-primary, #1095c1);
-  color: var(--pico-primary);
+.tree-type-label {
+  font-size: 0.6rem;
+  color: var(--pico-muted-color);
+  opacity: 0.6;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 4.5em;
+  text-align: right;
+  justify-self: end;
 }
 
 .add-child-wrap {

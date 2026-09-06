@@ -67,6 +67,20 @@ export async function PropertiesDataGetSectionValues(
   return rows.map((r) => ({ propertyId: r.propertyId, value: r.value }));
 }
 
+export async function PropertiesDataGetAllSectionValuesForBook(
+  bookId: string,
+): Promise<{ sectionId: string; propertyId: string; value: string }[]> {
+  const rows = await DbUtilsQuerySQL(
+    SQL_QUERIES.GET_ALL_SECTION_VALUES_FOR_BOOK[DbUtilsGetType()],
+    [bookId],
+  );
+  return rows.map((r) => ({
+    sectionId: r.sectionId,
+    propertyId: r.propertyId,
+    value: r.value,
+  }));
+}
+
 export async function PropertiesDataSetSectionValue(
   sectionId: string,
   propertyId: string,
@@ -140,5 +154,11 @@ const SQL_QUERIES = {
       'DELETE FROM section_properties WHERE "sectionId" = $1 AND "propertyId" = $2',
     sqlite:
       "DELETE FROM section_properties WHERE sectionId = ? AND propertyId = ?",
+  },
+  GET_ALL_SECTION_VALUES_FOR_BOOK: {
+    postgres:
+      'SELECT sp."sectionId", sp."propertyId", sp."value" FROM section_properties sp JOIN sections s ON sp."sectionId" = s."id" WHERE s."bookId" = $1',
+    sqlite:
+      "SELECT sp.sectionId, sp.propertyId, sp.value FROM section_properties sp JOIN sections s ON sp.sectionId = s.id WHERE s.bookId = ?",
   },
 };

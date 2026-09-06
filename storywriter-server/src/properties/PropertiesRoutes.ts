@@ -7,6 +7,7 @@ import {
   PropertiesDataAdd,
   PropertiesDataDelete,
   PropertiesDataGet,
+  PropertiesDataGetAllSectionValuesForBook,
   PropertiesDataGetSectionValues,
   PropertiesDataListByBook,
   PropertiesDataRemoveSectionValue,
@@ -106,6 +107,20 @@ export class PropertiesRoutes {
     });
 
     // ==================== SECTION PROPERTY VALUES ====================
+
+    // Bulk: get all section property values for a book
+    interface GetAllSectionValues extends RequestGenericInterface {
+      Querystring: { bookId: string };
+    }
+    fastify.get<GetAllSectionValues>("/sections", async (req, res) => {
+      const bookId = req.query.bookId;
+      if (!bookId) {
+        return res.status(400).send({ error: "Missing: bookId" });
+      }
+      if (!(await checkBookAccess(req, res, bookId, "read"))) return;
+      const values = await PropertiesDataGetAllSectionValuesForBook(bookId);
+      return res.status(200).send(values);
+    });
 
     // Get values for a section
     interface GetSectionValues extends RequestGenericInterface {

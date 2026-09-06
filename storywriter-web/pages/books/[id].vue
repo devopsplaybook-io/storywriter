@@ -5,6 +5,7 @@
       'mode-' + activePanel,
       { 'sidebar-collapsed': effectiveSidebarCollapsed },
     ]"
+    :style="sectionsGridStyle"
   >
     <!-- Top navigation bar (always visible) -->
     <nav id="book-nav">
@@ -89,6 +90,13 @@
         />
       </div>
     </aside>
+
+    <!-- Resize handle (desktop only) -->
+    <div
+      v-if="activePanel === 'sections' && !isMobile"
+      class="sidebar-resize-handle"
+      @mousedown="startResize"
+    />
 
     <!-- Editor: only for sections -->
     <main v-if="activePanel === 'sections'" id="editor-panel">
@@ -284,6 +292,60 @@ const isMobile = ref(
   typeof window !== "undefined" ? window.innerWidth <= 768 : false,
 );
 
+// Resizable sidebar width (desktop only)
+const SIDEBAR_MIN = 180;
+const SIDEBAR_MAX = 600;
+const SIDEBAR_DEFAULT = 280;
+const sidebarWidth = ref(
+  typeof window !== "undefined"
+    ? Math.min(
+        SIDEBAR_MAX,
+        Math.max(
+          SIDEBAR_MIN,
+          Number(localStorage.getItem("storywriter.sidebarWidth")) ||
+            SIDEBAR_DEFAULT,
+        ),
+      )
+    : SIDEBAR_DEFAULT,
+);
+const resizing = ref(false);
+
+const sectionsGridStyle = computed(() => {
+  if (activePanel.value !== "sections" || isMobile.value) return {};
+  return {
+    gridTemplateColumns: `${sidebarWidth.value}px 6px 1fr`,
+    gridTemplateAreas: '"nav nav nav" "sidebar handle editor"',
+  };
+});
+
+function startResize(e) {
+  resizing.value = true;
+  const startX = e.clientX;
+  const startWidth = sidebarWidth.value;
+
+  function onMouseMove(ev) {
+    const delta = ev.clientX - startX;
+    sidebarWidth.value = Math.min(
+      SIDEBAR_MAX,
+      Math.max(SIDEBAR_MIN, startWidth + delta),
+    );
+  }
+
+  function onMouseUp() {
+    resizing.value = false;
+    localStorage.setItem("storywriter.sidebarWidth", String(sidebarWidth.value));
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  }
+
+  document.addEventListener("mousemove", onMouseMove);
+  document.addEventListener("mouseup", onMouseUp);
+  document.body.style.cursor = "col-resize";
+  document.body.style.userSelect = "none";
+}
+
 // Desktop: sidebar always expanded; mobile: use saved preference
 const effectiveSidebarCollapsed = computed(() => {
   if (!isMobile.value) return false;
@@ -347,6 +409,7 @@ async function loadBook() {
     await sectionsStore.fetchByBook(bookId);
     await mediaStore.fetchMedia(bookId);
     await propertiesStore.fetchByBook(bookId);
+    await propertiesStore.fetchAllSectionValues(bookId);
     // Restore section from URL query param, or fall back to root
     const sectionFromUrl = route.query.section;
     if (
@@ -512,13 +575,13 @@ onMounted(async () => {
    Desktop layout (min-width: 769px)
    ============================================ */
 @media (min-width: 769px) {
-  /* Sections mode: nav on top, sidebar + editor below */
+  /* Sections mode: nav on top, sidebar + handle + editor below */
   #book-detail-layout.mode-sections {
     grid-template-rows: auto 1fr;
-    grid-template-columns: minmax(240px, 300px) 1fr;
+    grid-template-columns: minmax(240px, 300px) 6px 1fr;
     grid-template-areas:
-      "nav nav"
-      "sidebar editor";
+      "nav nav nav"
+      "sidebar handle editor";
   }
 
   #book-detail-layout.mode-sections #book-nav {
@@ -549,6 +612,20 @@ onMounted(async () => {
     overflow-y: auto;
     border-right: 1px solid var(--pico-muted-border-color, #444);
     padding-right: var(--space-sm);
+  }
+
+  .sidebar-resize-handle {
+    grid-area: handle;
+    cursor: col-resize;
+    background: transparent;
+    transition: background var(--transition-fast);
+    border-radius: 2px;
+  }
+
+  .sidebar-resize-handle:hover,
+  .sidebar-resize-handle:active {
+    background: var(--pico-primary, #1095c1);
+    opacity: 0.4;
   }
 
   /* Desktop: hide sidebar toggle, always show tree */
