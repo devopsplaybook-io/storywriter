@@ -1,5 +1,8 @@
 -- Add scopes column and remove dateCreated from users table
 -- to match common-utils UsersData schema
+-- Idempotent: handles partial runs where users_new was left behind.
+
+DROP TABLE IF EXISTS users_new;
 
 CREATE TABLE users_new (
     id VARCHAR(50) PRIMARY KEY,
