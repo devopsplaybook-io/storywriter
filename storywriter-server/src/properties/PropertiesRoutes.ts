@@ -5,6 +5,7 @@ import { BooksDataGetUserAccess } from "../books/BooksData";
 import { SectionsDataGet } from "../sections/SectionsData";
 import {
   PropertiesDataAdd,
+  PropertiesDataCleanupSectionValues,
   PropertiesDataDelete,
   PropertiesDataGet,
   PropertiesDataGetAllSectionValuesForBook,
@@ -86,9 +87,17 @@ export class PropertiesRoutes {
         return res.status(404).send({ error: "Property Not Found" });
       }
       if (!(await checkBookAccess(req, res, property.bookId, "write"))) return;
+      const previousOptions = property.options;
       if (req.body.name !== undefined) property.name = req.body.name;
       if (req.body.options !== undefined) property.options = req.body.options;
       await PropertiesDataUpdate(property);
+      // Options were narrowed: remove assignments for removed types
+      if (
+        req.body.options !== undefined &&
+        req.body.options.length !== previousOptions.length
+      ) {
+        await PropertiesDataCleanupSectionValues(property.id, property.options);
+      }
       return res.status(200).send(property.toTransportJson());
     });
 

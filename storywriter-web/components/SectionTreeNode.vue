@@ -191,6 +191,9 @@ const sectionTypeLabel = computed(() => {
 }
 
 .tree-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
   opacity: 0;
   transition: opacity var(--transition-fast);
 }
@@ -202,7 +205,13 @@ const sectionTypeLabel = computed(() => {
 .tree-actions i {
   cursor: pointer;
   font-size: var(--text-base);
-  padding: 0 var(--space-2xs);
+  line-height: 1;
+  padding: 0.3rem 0.35rem;
+  border-radius: var(--radius-sm, 4px);
+}
+
+.tree-actions i:hover {
+  background: var(--pico-secondary-background, rgba(128, 128, 128, 0.25));
 }
 
 .tree-children {
