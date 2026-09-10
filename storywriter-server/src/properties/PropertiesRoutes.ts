@@ -5,8 +5,10 @@ import { BooksDataGetUserAccess } from "../books/BooksData";
 import { SectionsDataGet } from "../sections/SectionsData";
 import {
   PropertiesDataAdd,
+  PropertiesDataCleanupSectionValues,
   PropertiesDataDelete,
   PropertiesDataGet,
+  PropertiesDataGetAllSectionValuesForBook,
   PropertiesDataGetSectionValues,
   PropertiesDataListByBook,
   PropertiesDataRemoveSectionValue,
@@ -85,9 +87,17 @@ export class PropertiesRoutes {
         return res.status(404).send({ error: "Property Not Found" });
       }
       if (!(await checkBookAccess(req, res, property.bookId, "write"))) return;
+      const previousOptions = property.options;
       if (req.body.name !== undefined) property.name = req.body.name;
       if (req.body.options !== undefined) property.options = req.body.options;
       await PropertiesDataUpdate(property);
+      // Options were narrowed: remove assignments for removed types
+      if (
+        req.body.options !== undefined &&
+        req.body.options.length !== previousOptions.length
+      ) {
+        await PropertiesDataCleanupSectionValues(property.id, property.options);
+      }
       return res.status(200).send(property.toTransportJson());
     });
 
@@ -106,6 +116,20 @@ export class PropertiesRoutes {
     });
 
     // ==================== SECTION PROPERTY VALUES ====================
+
+    // Bulk: get all section property values for a book
+    interface GetAllSectionValues extends RequestGenericInterface {
+      Querystring: { bookId: string };
+    }
+    fastify.get<GetAllSectionValues>("/sections", async (req, res) => {
+      const bookId = req.query.bookId;
+      if (!bookId) {
+        return res.status(400).send({ error: "Missing: bookId" });
+      }
+      if (!(await checkBookAccess(req, res, bookId, "read"))) return;
+      const values = await PropertiesDataGetAllSectionValuesForBook(bookId);
+      return res.status(200).send(values);
+    });
 
     // Get values for a section
     interface GetSectionValues extends RequestGenericInterface {

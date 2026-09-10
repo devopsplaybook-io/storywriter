@@ -61,6 +61,19 @@ export const usePropertiesStore = defineStore("properties", {
       return res.data;
     },
 
+    async fetchAllSectionValues(bookId: string) {
+      const res = await api.get("/properties/sections", {
+        params: { bookId },
+      });
+      // Group by sectionId
+      const grouped: Record<string, SectionPropertyValue[]> = {};
+      for (const row of res.data) {
+        if (!grouped[row.sectionId]) grouped[row.sectionId] = [];
+        grouped[row.sectionId].push(row);
+      }
+      this.sectionValues = grouped;
+    },
+
     async setSectionValue(
       sectionId: string,
       propertyId: string,

@@ -64,6 +64,9 @@ function formatDate(dateStr) {
 .book-card header h3 {
   margin: 0;
   font-size: var(--text-lg);
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: break-word;
 }
 
 .card-date {

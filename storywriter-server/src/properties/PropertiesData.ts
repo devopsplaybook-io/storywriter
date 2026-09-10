@@ -46,6 +46,41 @@ export async function PropertiesDataUpdate(property: Property): Promise<void> {
   ]);
 }
 
+/**
+ * Remove section assignments for types that no longer exist in the
+ * property options. Values are comma-separated type lists: keep only
+ * the valid options, delete rows that become empty.
+ */
+export async function PropertiesDataCleanupSectionValues(
+  propertyId: string,
+  validOptions: string[],
+): Promise<void> {
+  const rows = await DbUtilsQuerySQL(
+    SQL_QUERIES.LIST_SECTION_VALUES_BY_PROPERTY[DbUtilsGetType()],
+    [propertyId],
+  );
+  for (const row of rows) {
+    const current = String(row.value || "");
+    const kept = current
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s && validOptions.includes(s));
+    const next = kept.join(",");
+    if (next === current) continue;
+    if (next === "") {
+      await DbUtilsExecSQL(
+        SQL_QUERIES.DELETE_SECTION_PROPERTY_VALUE[DbUtilsGetType()],
+        [row.sectionId, propertyId],
+      );
+    } else {
+      await DbUtilsExecSQL(
+        SQL_QUERIES.UPDATE_SECTION_PROPERTY_VALUE[DbUtilsGetType()],
+        [next, row.sectionId, propertyId],
+      );
+    }
+  }
+}
+
 export async function PropertiesDataDelete(id: string): Promise<void> {
   // Delete section property values first
   await DbUtilsExecSQL(
@@ -65,6 +100,20 @@ export async function PropertiesDataGetSectionValues(
     [sectionId],
   );
   return rows.map((r) => ({ propertyId: r.propertyId, value: r.value }));
+}
+
+export async function PropertiesDataGetAllSectionValuesForBook(
+  bookId: string,
+): Promise<{ sectionId: string; propertyId: string; value: string }[]> {
+  const rows = await DbUtilsQuerySQL(
+    SQL_QUERIES.GET_ALL_SECTION_VALUES_FOR_BOOK[DbUtilsGetType()],
+    [bookId],
+  );
+  return rows.map((r) => ({
+    sectionId: r.sectionId,
+    propertyId: r.propertyId,
+    value: r.value,
+  }));
 }
 
 export async function PropertiesDataSetSectionValue(
@@ -140,5 +189,23 @@ const SQL_QUERIES = {
       'DELETE FROM section_properties WHERE "sectionId" = $1 AND "propertyId" = $2',
     sqlite:
       "DELETE FROM section_properties WHERE sectionId = ? AND propertyId = ?",
+  },
+  GET_ALL_SECTION_VALUES_FOR_BOOK: {
+    postgres:
+      'SELECT sp."sectionId", sp."propertyId", sp."value" FROM section_properties sp JOIN sections s ON sp."sectionId" = s."id" WHERE s."bookId" = $1',
+    sqlite:
+      "SELECT sp.sectionId, sp.propertyId, sp.value FROM section_properties sp JOIN sections s ON sp.sectionId = s.id WHERE s.bookId = ?",
+  },
+  LIST_SECTION_VALUES_BY_PROPERTY: {
+    postgres:
+      'SELECT "sectionId", "value" FROM section_properties WHERE "propertyId" = $1',
+    sqlite:
+      "SELECT sectionId, value FROM section_properties WHERE propertyId = ?",
+  },
+  UPDATE_SECTION_PROPERTY_VALUE: {
+    postgres:
+      'UPDATE section_properties SET "value" = $1 WHERE "sectionId" = $2 AND "propertyId" = $3',
+    sqlite:
+      "UPDATE section_properties SET value = ? WHERE sectionId = ? AND propertyId = ?",
   },
 };
