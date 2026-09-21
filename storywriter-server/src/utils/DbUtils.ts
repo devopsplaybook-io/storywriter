@@ -59,21 +59,18 @@ export function DbUtilsQuerySQL(
   sql: string,
   params?: unknown[],
   debug?: boolean,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any[]>;
 export function DbUtilsQuerySQL(
   context: Span | undefined,
   sql: string,
   params?: unknown[],
   debug?: boolean,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any[]>;
 export function DbUtilsQuerySQL(
   contextOrSql: Span | undefined | string,
   sqlOrParams?: string | unknown[],
   paramsOrDebug?: unknown[] | boolean,
   debug?: boolean,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<any[]> {
   // Detect if first argument is a string (old signature) or Span/undefined (new signature)
   if (typeof contextOrSql === "string") {

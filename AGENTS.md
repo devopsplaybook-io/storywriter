@@ -87,10 +87,10 @@ storywriter/
 - **Framework**: Fastify
 - **Database**: SQLite via `better-sqlite3` (with optional PostgreSQL support)
 - **Libraries**: `@devopsplaybook.io/common-utils`, `@devopsplaybook.io/otel-utils-fastify`
-- **Build**: `tsc` (compiles `src/` to `dist/`)
-- **Dev mode**: `ts-node-dev` (hot-reload)
-- **Tests**: Jest with `ts-jest`, files named `*.spec.ts` alongside source
-- **Linting**: ESLint with `typescript-eslint`
+- **Build**: `tsc && tsc -p tsconfig.spec.json --noEmit` (compiles `src/` to `dist/`, type-checks tests)
+- **Dev mode**: `tsx watch` (hot-reload)
+- **Tests**: Jest with `@swc/jest`, files named `*.spec.ts` alongside source
+- **Linting**: oxlint
 - **Config**: Loaded from `config.json`, overridable via environment variables
 
 #### Server patterns

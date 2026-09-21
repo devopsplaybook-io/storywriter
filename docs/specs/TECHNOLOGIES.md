@@ -6,10 +6,10 @@
 - [x] **Framework**: Fastify (HTTP API)
 - [x] **Database**: SQLite via `better-sqlite3` (default), with optional PostgreSQL support
 - [x] **Language**: TypeScript
-- [x] **Build**: `tsc` (compiles `src/` to `dist/`)
-- [x] **Dev mode**: `ts-node-dev` (hot-reload)
-- [x] **Tests**: Jest with `ts-jest`
-- [x] **Linting**: ESLint with `typescript-eslint`
+- [x] **Build**: `tsc && tsc -p tsconfig.spec.json --noEmit` (compiles `src/` to `dist/`, type-checks tests)
+- [x] **Dev mode**: `tsx watch` (hot-reload)
+- [x] **Tests**: Jest with `@swc/jest`
+- [x] **Linting**: oxlint
 - [x] **Config**: Loaded from `config.json`, overridable via environment variables
 
 ### Libraries
@@ -59,4 +59,4 @@
 - [x] Used for book analysis feature (`src/analysis/`)
 - [x] Retry with exponential backoff; results cached to disk
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-06-18_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-09-21_

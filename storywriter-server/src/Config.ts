@@ -31,7 +31,7 @@ export class Config extends ConfigBase {
       if (pkg && pkg.version) {
         this.VERSION = pkg.version;
       }
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      // eslint-disable-next-line no-unused-vars
     } catch (_e) {
       // fallback to default
     }

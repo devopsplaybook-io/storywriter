@@ -1,17 +1,16 @@
 {
   "name": "storywriter-server",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": "",
   "license": "MIT",
   "scripts": {
     "//": "-------------------------------------------------------------------",
-    "build": "tsc",
-    "lint": "eslint src",
+    "build": "tsc && tsc -p tsconfig.spec.json --noEmit",
+    "lint": "oxlint src",
     "test": "jest --coverage",
     "////": "-----------------------------------------------------------------",
-    "dev": "ts-node-dev ./src/App.ts",
-    "dev:test": "NODE_ENV=dev jest --watch --config='jest.config.js'",
-    "migrate": "ts-node ./src/migrate-database.ts"
+    "dev": "tsx watch ./src/App.ts",
+    "dev:test": "NODE_ENV=dev jest --watch --config='jest.config.js'"
   },
   "dependencies": {
     "@devopsplaybook.io/common-utils": "^1.7.0",
@@ -31,19 +30,17 @@
     "uuid": "^14.0.2"
   },
   "devDependencies": {
-    "@eslint/js": "~10.0.1",
+    "@swc/core": "^1.16.2",
+    "@swc/jest": "^0.2.39",
     "@types/archiver": "^8.0.0",
     "@types/better-sqlite3": "^9.6.0",
     "@types/fs-extra": "^11.0.4",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.4.1",
-    "eslint": "^10.10.0",
     "jest": "^30.5.1",
+    "oxlint": "^1.83.0",
     "sinon": "^22.1.0",
-    "ts-jest": "^29.4.12",
-    "ts-node": "^10.9.2",
-    "ts-node-dev": "^2.0.0",
-    "typescript": "^6.0.3",
-    "typescript-eslint": "^8.69.0"
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
   }
 }
