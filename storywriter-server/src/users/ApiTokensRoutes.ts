@@ -18,7 +18,6 @@ import {
  * Retrieves the OTel span attached to the request by the
  * `@devopsplaybook.io/otel-utils-fastify` hooks.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function requestSpan(req: any): Span | undefined {
   return req?.tracerSpanApi;
 }
@@ -45,7 +44,6 @@ function generateApiToken(user: User, config: Config): string {
  * API tokens are verified against the database to support revocation.
  */
 export async function resolveUserSession(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   req: any,
   config: Config,
 ): Promise<{

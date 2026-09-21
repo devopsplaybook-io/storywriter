@@ -19,9 +19,7 @@ export class SectionsRoutes {
   public async getRoutes(fastify: FastifyInstance): Promise<void> {
     // Helper: check user has at least read access to a book
     async function checkBookAccess(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       req: any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       res: any,
       bookId: string,
       requiredPermission: "read" | "write" = "read",
