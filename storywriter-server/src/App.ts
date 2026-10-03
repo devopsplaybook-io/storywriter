@@ -17,10 +17,10 @@ import {
   AuthSetOTel,
   DbUtilsInit,
   DbUtilsSetOTel,
+  UsersApiTokensDataSetOTel,
   UsersDataSetOTel,
   UsersRoutes,
 } from "@devopsplaybook.io/common-utils";
-import { ApiTokensRoutes } from "./users/ApiTokensRoutes";
 import { BooksRoutes } from "./books/BooksRoutes";
 import { SectionsRoutes } from "./sections/SectionsRoutes";
 import { PropertiesRoutes } from "./properties/PropertiesRoutes";
@@ -68,6 +68,7 @@ Promise.resolve().then(async () => {
   // Initialize auth (loads/generates JWT key from metadata table)
   AuthSetOTel(OTelTracer());
   UsersDataSetOTel(OTelTracer());
+  UsersApiTokensDataSetOTel(OTelTracer());
   await AuthInit(span, config, []);
 
   await BookAnalysisInit(config);
@@ -113,14 +114,6 @@ Promise.resolve().then(async () => {
   fastify.register(new UsersRoutes().getRoutes, {
     prefix: "/api/users",
   });
-
-  // Register API tokens routes (extends /api/users with /tokens endpoints)
-  await fastify.register(
-    async (instance) => {
-      await new ApiTokensRoutes(config).getRoutes(instance);
-    },
-    { prefix: "/api/users" },
-  );
 
   await fastify.register(
     async (instance) => {
