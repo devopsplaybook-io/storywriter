@@ -6,7 +6,8 @@ export interface ApiToken {
   id: string;
   name: string;
   dateCreated: string;
-  tokenPrefix?: string;
+  expiresAt?: string | null;
+  lastUsedAt?: string | null;
   token?: string;
 }
 

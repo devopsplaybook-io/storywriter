@@ -52,7 +52,7 @@
           <thead>
             <tr>
               <th>Name</th>
-              <th>Token</th>
+              <th>Last used</th>
               <th>Created</th>
               <th></th>
             </tr>
@@ -60,9 +60,7 @@
           <tbody>
             <tr v-for="t in apiTokens" :key="t.id">
               <td>{{ t.name }}</td>
-              <td class="token-prefix">
-                <code>{{ t.tokenPrefix || t.token }}</code>
-              </td>
+              <td>{{ t.lastUsedAt ? formatDate(t.lastUsedAt) : "—" }}</td>
               <td>{{ formatDate(t.dateCreated) }}</td>
               <td>
                 <button
@@ -330,7 +328,7 @@ async function createToken() {
       id: result.id,
       name: result.name,
       dateCreated: result.dateCreated,
-      tokenPrefix: result.token.substring(0, 20) + "...",
+      lastUsedAt: null,
     });
   } catch {
     // silent
@@ -513,11 +511,6 @@ section h2 {
 /* API Tokens */
 .tokens-table {
   font-size: var(--text-sm);
-}
-
-.token-prefix code {
-  font-size: var(--text-xs);
-  word-break: break-all;
 }
 
 .create-token-row {
