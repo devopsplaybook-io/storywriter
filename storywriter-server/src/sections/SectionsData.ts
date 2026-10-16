@@ -157,8 +157,11 @@ export async function SectionsDataCopy(
   const copy = new Section();
   copy.bookId = source.bookId;
   copy.parentId = targetParentId;
+  copy.type = source.type;
   copy.title = `${source.title} (copy)`;
   copy.content = source.content;
+  copy.mediaId = source.mediaId;
+  copy.caption = source.caption;
   copy.orderIndex = orderIndex;
   await SectionsDataAdd(copy);
 

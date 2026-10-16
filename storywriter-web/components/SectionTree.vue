@@ -3,8 +3,14 @@
     <div v-if="rootSection" class="tree-node">
       <div
         class="tree-item"
-        :class="{ selected: selectedId === rootSection.id }"
+        :class="{
+          selected: selectedId === rootSection.id,
+          'drag-over-into': rootDropActive,
+        }"
         @click="$emit('select', rootSection.id)"
+        @dragover="onRootDragOver"
+        @dragleave="onRootDragLeave"
+        @drop.prevent="onRootDrop"
       >
         <i class="bi bi-book" />
         <span class="tree-label">{{ rootSection.title || "Book Root" }}</span>
@@ -43,6 +49,13 @@
             (id, parentId, orderIndex) =>
               $emit('move', id, parentId, orderIndex)
           "
+          @reorder="
+            (id, parentId, orderIndex) =>
+              $emit('reorder', id, parentId, orderIndex)
+          "
+          @rename="(id) => $emit('rename', id)"
+          @duplicate="(id) => $emit('duplicate', id)"
+          @move-to="(id) => $emit('move-to', id)"
           @delete="(id) => $emit('delete', id)"
         />
       </div>
@@ -52,7 +65,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from "vue";
+import { ref, provide, watch, onMounted, onBeforeUnmount } from "vue";
 
 const props = defineProps({
   rootSection: { type: Object, default: null },
@@ -60,9 +73,51 @@ const props = defineProps({
   getChildren: { type: Function, required: true },
 });
 
-const emit = defineEmits(["select", "add-child", "move", "delete"]);
+const emit = defineEmits([
+  "select",
+  "add-child",
+  "move",
+  "reorder",
+  "rename",
+  "duplicate",
+  "move-to",
+  "delete",
+]);
+
+// Shared drag context: the section currently being dragged (id + subtree ids)
+const treeDrag = ref(null);
+provide("treeDrag", treeDrag);
 
 const showTypePicker = ref(false);
+const rootDropActive = ref(false);
+
+watch(treeDrag, (drag) => {
+  if (!drag) rootDropActive.value = false;
+});
+
+function onRootDragOver(event) {
+  const drag = treeDrag.value;
+  if (!drag || !props.rootSection || drag.id === props.rootSection.id) return;
+  rootDropActive.value = true;
+  event.preventDefault();
+}
+
+function onRootDragLeave() {
+  rootDropActive.value = false;
+}
+
+function onRootDrop(event) {
+  event.preventDefault();
+  rootDropActive.value = false;
+  const drag = treeDrag.value;
+  if (!drag || !props.rootSection || drag.id === props.rootSection.id) return;
+  emit(
+    "move",
+    drag.id,
+    props.rootSection.id,
+    props.getChildren(props.rootSection.id).length,
+  );
+}
 
 function pickType(type) {
   showTypePicker.value = false;
@@ -84,6 +139,7 @@ onBeforeUnmount(() => document.removeEventListener("click", closePicker));
 }
 
 .tree-item {
+  position: relative;
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
@@ -101,6 +157,11 @@ onBeforeUnmount(() => document.removeEventListener("click", closePicker));
 .tree-item.selected {
   background: var(--pico-primary-background, rgba(16, 149, 193, 0.15));
   color: var(--pico-primary);
+}
+
+.tree-item.drag-over-into {
+  background: var(--pico-primary-background, rgba(16, 149, 193, 0.3));
+  outline: 1px dashed var(--pico-primary, #1095c1);
 }
 
 .tree-label {

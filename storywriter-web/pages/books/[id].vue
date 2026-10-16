@@ -86,6 +86,11 @@
           :get-children="sectionsStore.getChildren"
           @select="selectSection"
           @add-child="addChildSection"
+          @move="handleTreeMove"
+          @reorder="handleTreeReorder"
+          @rename="handleRename"
+          @duplicate="handleDuplicate"
+          @move-to="handleMoveTo"
           @delete="confirmDeleteSection"
         />
       </div>
@@ -259,6 +264,64 @@
         </footer>
       </article>
     </dialog>
+
+    <!-- Rename Section Dialog -->
+    <dialog :open="renameTarget !== null">
+      <article>
+        <header>
+          <h3>Rename Section</h3>
+          <button
+            class="close-btn"
+            aria-label="Close"
+            @click="renameTarget = null"
+          >
+            <i class="bi bi-x-lg" />
+          </button>
+        </header>
+        <label>
+          Title
+          <input v-model="renameTitle" type="text" @keyup.enter="confirmRename" />
+        </label>
+        <footer class="dialog-footer">
+          <button class="secondary" @click="renameTarget = null">Cancel</button>
+          <button @click="confirmRename">Rename</button>
+        </footer>
+      </article>
+    </dialog>
+
+    <!-- Move Section Dialog (keyboard/touch-accessible alternative to drag-and-drop) -->
+    <dialog :open="moveToTarget !== null">
+      <article>
+        <header>
+          <h3>Move Section</h3>
+          <button
+            class="close-btn"
+            aria-label="Close"
+            @click="moveToTarget = null"
+          >
+            <i class="bi bi-x-lg" />
+          </button>
+        </header>
+        <p>Choose a destination container. The section is added at the end of it.</p>
+        <label>
+          Destination
+          <select v-model="moveToParentId">
+            <option value="" disabled>Select a container…</option>
+            <option
+              v-for="option in moveToOptions"
+              :key="option.id"
+              :value="option.id"
+            >
+              {{ moveOptionLabel(option) }}
+            </option>
+          </select>
+        </label>
+        <footer class="dialog-footer">
+          <button class="secondary" @click="moveToTarget = null">Cancel</button>
+          <button :disabled="!moveToParentId" @click="confirmMoveTo">Move</button>
+        </footer>
+      </article>
+    </dialog>
   </div>
 </template>
 
@@ -268,6 +331,7 @@ import { usePropertiesStore } from "../../stores/properties";
 import { useSaveStatusStore } from "../../stores/saveStatus";
 import { useToastsStore } from "../../stores/toasts";
 import { clearDraft } from "../../utils/drafts";
+import { isSelfOrDescendant, validMoveTargets } from "../../utils/sectionTree";
 
 const route = useRoute();
 const router = useRouter();
@@ -384,6 +448,10 @@ watch(sectionViewMode, (mode) => {
   }
 });
 const deleteSectionTarget = ref(null);
+const renameTarget = ref(null);
+const renameTitle = ref("");
+const moveToTarget = ref(null);
+const moveToParentId = ref("");
 
 const mediaList = computed(() => {
   if (!book.value) return [];
@@ -529,6 +597,161 @@ async function handleReorderChildren({ sourceIndex, targetIndex }) {
 async function handleRecursiveUpdateSection({ sectionId, data }) {
   saveStatus.markUnsaved();
   await saveSection(sectionId, data);
+}
+
+// ==================== Tree restructuring (drag-and-drop, rename, duplicate, move) ====================
+
+// Build the desired child order of parentId after inserting the moved section at insertIndex
+function arrangementForInsert(parentId, movedId, insertIndex) {
+  const existing = sectionsStore
+    .getChildren(parentId)
+    .filter((s) => s.id !== movedId);
+  const moved = sectionsStore.sections.find((s) => s.id === movedId);
+  if (!moved) return existing;
+  const list = [...existing];
+  list.splice(Math.max(0, Math.min(insertIndex, list.length)), 0, moved);
+  return list;
+}
+
+// Persist orderIndexes that differ from the desired sequential order
+async function applyArrangement(list) {
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].orderIndex !== i) {
+      await sectionsStore.reorder(list[i].id, i);
+    }
+  }
+}
+
+async function renumberChildren(parentId) {
+  await applyArrangement(sectionsStore.getChildren(parentId));
+}
+
+async function handleTreeMove(id, parentId, orderIndex) {
+  const section = sectionsStore.sections.find((s) => s.id === id);
+  const target = sectionsStore.sections.find((s) => s.id === parentId);
+  if (!section || !target || target.type !== "container") return;
+  if (section.parentId === null) {
+    toastsStore.error("The root section cannot be moved.");
+    return;
+  }
+  if (isSelfOrDescendant(id, parentId, sectionsStore.sections)) {
+    toastsStore.error("Cannot move a section into its own subtree.");
+    return;
+  }
+  const oldParentId = section.parentId;
+  try {
+    const arrangement = arrangementForInsert(parentId, id, orderIndex);
+    await sectionsStore.move(id, parentId, orderIndex);
+    await applyArrangement(arrangement);
+    if (oldParentId !== parentId) {
+      await renumberChildren(oldParentId);
+    }
+  } catch {
+    toastsStore.error("Could not move section.");
+  } finally {
+    // Resync the UI with the server so sibling orderIndexes are never stale
+    await sectionsStore.fetchByBook(book.value.id);
+  }
+}
+
+async function handleTreeReorder(id, parentId, orderIndex) {
+  const section = sectionsStore.sections.find((s) => s.id === id);
+  if (!section) return;
+  if (section.parentId !== parentId) {
+    // Drop between siblings of another parent is a cross-parent move
+    return handleTreeMove(id, parentId, orderIndex);
+  }
+  const target = sectionsStore.sections.find((s) => s.id === parentId);
+  if (!target || target.type !== "container") return;
+  try {
+    await applyArrangement(arrangementForInsert(parentId, id, orderIndex));
+  } catch {
+    await sectionsStore.fetchByBook(book.value.id);
+    toastsStore.error("Could not reorder sections.");
+  }
+}
+
+async function handleDuplicate(id) {
+  const section = sectionsStore.sections.find((s) => s.id === id);
+  if (!section) return;
+  if (section.parentId === null) {
+    toastsStore.error("The root section cannot be duplicated.");
+    return;
+  }
+  try {
+    const copy = await sectionsStore.copy(
+      id,
+      section.parentId,
+      section.orderIndex + 1,
+    );
+    // Renumber siblings so the copy sits exactly after the original
+    const siblings = sectionsStore
+      .getChildren(section.parentId)
+      .filter((s) => s.id !== copy.id);
+    const origIndex = siblings.findIndex((s) => s.id === id);
+    siblings.splice(origIndex + 1, 0, copy);
+    await applyArrangement(siblings);
+  } catch {
+    toastsStore.error("Could not duplicate section.");
+  }
+}
+
+function handleRename(id) {
+  const section = sectionsStore.sections.find((s) => s.id === id);
+  if (!section) return;
+  renameTarget.value = id;
+  renameTitle.value = section.title || "";
+}
+
+async function confirmRename() {
+  const id = renameTarget.value;
+  if (!id) return;
+  const title = renameTitle.value.trim();
+  if (!title) {
+    toastsStore.error("Section title cannot be empty.");
+    return;
+  }
+  try {
+    await sectionsStore.update(id, { title });
+    renameTarget.value = null;
+  } catch {
+    toastsStore.error("Could not rename section.");
+  }
+}
+
+function handleMoveTo(id) {
+  const section = sectionsStore.sections.find((s) => s.id === id);
+  if (!section) return;
+  if (section.parentId === null) {
+    toastsStore.error("The root section cannot be moved.");
+    return;
+  }
+  moveToTarget.value = id;
+  moveToParentId.value = "";
+}
+
+const moveToOptions = computed(() => {
+  if (!moveToTarget.value) return [];
+  return validMoveTargets(sectionsStore.sections, moveToTarget.value);
+});
+
+function moveOptionLabel(section) {
+  let depth = 0;
+  let current = section;
+  while (current && current.parentId) {
+    depth += 1;
+    current = sectionsStore.sections.find((s) => s.id === current.parentId);
+  }
+  return `${"—".repeat(depth)} ${section.title || "Untitled"}`.trim();
+}
+
+async function confirmMoveTo() {
+  const id = moveToTarget.value;
+  const parentId = moveToParentId.value;
+  if (!id || !parentId) return;
+  const childCount = sectionsStore.getChildren(parentId).length;
+  moveToTarget.value = null;
+  await handleTreeMove(id, parentId, childCount);
 }
 
 async function handleSaveVersion() {

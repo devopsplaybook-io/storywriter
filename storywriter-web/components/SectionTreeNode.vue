@@ -5,8 +5,22 @@
   >
     <div
       class="tree-item"
-      :class="{ selected: selectedId === section.id }"
+      :class="{
+        selected: selectedId === section.id,
+        dragging: isDragSource,
+        'drag-over-into': dropMode === 'into',
+        'drag-over-before': dropMode === 'before',
+        'drag-over-after': dropMode === 'after',
+        'menu-open': showMenu,
+      }"
+      draggable="true"
       @click="$emit('select', section.id)"
+      @dragstart="onDragStart"
+      @dragover="onDragOver"
+      @dragleave="clearDrop"
+      @drop.prevent="onDrop"
+      @dragend="onDragEnd"
+      @contextmenu.prevent="showMenu = true"
     >
       <i :class="sectionIcon" />
       <span class="tree-label">{{ section.title || "Untitled" }}</span>
@@ -26,6 +40,27 @@
             </button>
             <button @click.stop="pickType('media')">
               <i class="bi bi-image" /> Media
+            </button>
+          </div>
+        </span>
+        <span class="menu-wrap">
+          <i
+            class="bi bi-three-dots"
+            title="Section menu"
+            @click.stop="showMenu = !showMenu"
+          />
+          <div v-if="showMenu" class="tree-menu-popover">
+            <button @click.stop="menuAction('rename')">
+              <i class="bi bi-pencil" /> Rename
+            </button>
+            <button @click.stop="menuAction('duplicate')">
+              <i class="bi bi-copy" /> Duplicate
+            </button>
+            <button @click.stop="menuAction('move-to')">
+              <i class="bi bi-arrow-right-circle" /> Move to…
+            </button>
+            <button @click.stop="menuAction('delete')">
+              <i class="bi bi-trash" /> Delete
             </button>
           </div>
         </span>
@@ -50,6 +85,13 @@
         @move="
           (id, parentId, orderIndex) => $emit('move', id, parentId, orderIndex)
         "
+        @reorder="
+          (id, parentId, orderIndex) =>
+            $emit('reorder', id, parentId, orderIndex)
+        "
+        @rename="(id) => $emit('rename', id)"
+        @duplicate="(id) => $emit('duplicate', id)"
+        @move-to="(id) => $emit('move-to', id)"
         @delete="(id) => $emit('delete', id)"
       />
     </div>
@@ -57,8 +99,9 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted, onBeforeUnmount } from "vue";
+import { computed, inject, ref, onMounted, onBeforeUnmount } from "vue";
 import { usePropertiesStore } from "../stores/properties";
+import { buildReorderedSiblings, computeDropMode } from "../utils/sectionTree";
 
 const props = defineProps({
   section: { type: Object, required: true },
@@ -67,25 +110,113 @@ const props = defineProps({
   depth: { type: Number, default: 1 },
 });
 
-const emit = defineEmits(["select", "add-child", "move", "delete"]);
+const emit = defineEmits([
+  "select",
+  "add-child",
+  "move",
+  "reorder",
+  "rename",
+  "duplicate",
+  "move-to",
+  "delete",
+]);
 
 const propertiesStore = usePropertiesStore();
 
+// Shared drag context provided by SectionTree so every node can guard drops
+const treeDrag = inject("treeDrag", ref(null));
+
 const showTypePicker = ref(false);
+const showMenu = ref(false);
+const dropMode = ref(null);
+
+const children = computed(() => props.getChildren(props.section.id));
+const hasChildren = computed(() => children.value.length > 0);
+
+const isDragSource = computed(() => treeDrag.value?.id === props.section.id);
+
+function collectSubtreeIds(id) {
+  const ids = [id];
+  for (const child of props.getChildren(id)) {
+    ids.push(...collectSubtreeIds(child.id));
+  }
+  return ids;
+}
+
+function onDragStart(event) {
+  treeDrag.value = {
+    id: props.section.id,
+    subtreeIds: collectSubtreeIds(props.section.id),
+  };
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", props.section.id);
+}
+
+function onDragOver(event) {
+  const drag = treeDrag.value;
+  if (!drag || drag.subtreeIds.includes(props.section.id)) return;
+  const rect = event.currentTarget.getBoundingClientRect();
+  const ratioY = rect.height > 0 ? (event.clientY - rect.top) / rect.height : 0;
+  dropMode.value = computeDropMode(ratioY, props.section.type === "container");
+  event.preventDefault();
+}
+
+function clearDrop() {
+  dropMode.value = null;
+}
+
+function onDrop(event) {
+  event.preventDefault();
+  const drag = treeDrag.value;
+  const mode = dropMode.value;
+  clearDrop();
+  if (!drag || !mode || drag.subtreeIds.includes(props.section.id)) return;
+  if (mode === "into") {
+    emit("move", drag.id, props.section.id, children.value.length);
+    return;
+  }
+  const siblings = props.section.parentId
+    ? props.getChildren(props.section.parentId)
+    : [];
+  const reordered = buildReorderedSiblings(
+    siblings,
+    drag.id,
+    props.section.id,
+    mode,
+  );
+  let orderIndex;
+  if (reordered) {
+    orderIndex = reordered.findIndex((s) => s.id === drag.id);
+  } else {
+    // Cross-parent drop: the dragged section is not part of this sibling list
+    const targetIndex = siblings.findIndex((s) => s.id === props.section.id);
+    if (targetIndex < 0) return;
+    orderIndex = mode === "before" ? targetIndex : targetIndex + 1;
+  }
+  emit("reorder", drag.id, props.section.parentId, orderIndex);
+}
+
+function onDragEnd() {
+  treeDrag.value = null;
+  clearDrop();
+}
+
+function menuAction(action) {
+  showMenu.value = false;
+  emit(action, props.section.id);
+}
 
 function pickType(type) {
   showTypePicker.value = false;
   emit("add-child", props.section.id, type);
 }
 
-function closePicker(e) {
+function closePopovers() {
   if (showTypePicker.value) showTypePicker.value = false;
+  if (showMenu.value) showMenu.value = false;
 }
-onMounted(() => document.addEventListener("click", closePicker));
-onBeforeUnmount(() => document.removeEventListener("click", closePicker));
-
-const children = computed(() => props.getChildren(props.section.id));
-const hasChildren = computed(() => children.value.length > 0);
+onMounted(() => document.addEventListener("click", closePopovers));
+onBeforeUnmount(() => document.removeEventListener("click", closePopovers));
 
 const sectionIcon = computed(() => {
   const type = props.section.type || "text";
@@ -117,6 +248,7 @@ const sectionTypeLabel = computed(() => {
 
 <style scoped>
 .tree-item {
+  position: relative;
   display: grid;
   grid-template-columns: auto 1fr auto auto;
   align-items: center;
@@ -134,6 +266,34 @@ const sectionTypeLabel = computed(() => {
 .tree-item.selected {
   background: var(--pico-primary-background, rgba(16, 149, 193, 0.15));
   color: var(--pico-primary);
+}
+
+.tree-item.dragging {
+  opacity: 0.4;
+}
+
+.tree-item.drag-over-into {
+  background: var(--pico-primary-background, rgba(16, 149, 193, 0.3));
+  outline: 1px dashed var(--pico-primary, #1095c1);
+}
+
+.tree-item.drag-over-before::before,
+.tree-item.drag-over-after::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--pico-primary, #1095c1);
+  z-index: 1;
+}
+
+.tree-item.drag-over-before::before {
+  top: 0;
+}
+
+.tree-item.drag-over-after::after {
+  bottom: 0;
 }
 
 .tree-label {
@@ -154,12 +314,14 @@ const sectionTypeLabel = computed(() => {
   justify-self: end;
 }
 
-.add-child-wrap {
+.add-child-wrap,
+.menu-wrap {
   position: relative;
   display: inline-block;
 }
 
-.type-picker-popover {
+.type-picker-popover,
+.tree-menu-popover {
   position: absolute;
   right: 0;
   top: 100%;
@@ -172,7 +334,8 @@ const sectionTypeLabel = computed(() => {
   padding: var(--space-2xs) 0;
 }
 
-.type-picker-popover button {
+.type-picker-popover button,
+.tree-menu-popover button {
   display: flex;
   align-items: center;
   gap: var(--space-xs);
@@ -186,7 +349,8 @@ const sectionTypeLabel = computed(() => {
   text-align: left;
 }
 
-.type-picker-popover button:hover {
+.type-picker-popover button:hover,
+.tree-menu-popover button:hover {
   background: var(--pico-primary-background, rgba(16, 149, 193, 0.15));
 }
 
@@ -198,7 +362,8 @@ const sectionTypeLabel = computed(() => {
   transition: opacity var(--transition-fast);
 }
 
-.tree-item:hover .tree-actions {
+.tree-item:hover .tree-actions,
+.tree-item.menu-open .tree-actions {
   opacity: 1;
 }
 
