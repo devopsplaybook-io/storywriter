@@ -14,6 +14,7 @@ import {
   SectionsDataUpdate,
   SectionsDataUpdateOrder,
 } from "./SectionsData";
+import { isSelfOrDescendant } from "./SectionsTree";
 
 export class SectionsRoutes {
   public async getRoutes(fastify: FastifyInstance): Promise<void> {
@@ -204,6 +205,20 @@ export class SectionsRoutes {
         return res
           .status(400)
           .send({ error: "Can only move sections into containers" });
+      }
+      if (section.parentId === null) {
+        return res.status(400).send({ error: "Cannot move the root section" });
+      }
+      if (targetParent.bookId !== section.bookId) {
+        return res
+          .status(400)
+          .send({ error: "Section and target parent are in different books" });
+      }
+      const allSections = await SectionsDataListByBook(section.bookId);
+      if (isSelfOrDescendant(section.id, targetParent.id, allSections)) {
+        return res
+          .status(400)
+          .send({ error: "Cannot move a section into its own subtree" });
       }
 
       await SectionsDataMove(

@@ -84,6 +84,14 @@ Sections are the structural building blocks of a book. They form a hierarchical 
 - [x] The browser warns before closing or reloading the tab while there is unsaved work (`beforeunload` guard).
 - [x] A local draft buffer (localStorage) keeps in-flight text so it survives a crash, tab close or network loss, and is restored on the next open.
 
+## Restructuring
+
+- [x] Sections can be restructured by drag-and-drop in the tree: dropping on a container moves the section under it; dropping between siblings reorders it.
+- [x] The root section cannot be moved, and a section cannot be moved into its own subtree.
+- [x] A tree node context menu (also via right-click) offers rename, duplicate, move to… and delete.
+- [x] Duplicating a section copies it with its whole subtree, keeping type, media and caption; the copy is inserted right after the original.
+- [x] A keyboard-accessible "Move to…" dialog moves a section to any allowed container for touch and screen-reader users.
+
 _Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-16_
 
 # Sections
