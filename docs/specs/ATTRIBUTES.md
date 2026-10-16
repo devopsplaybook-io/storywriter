@@ -18,6 +18,9 @@ Attributes are book-level metadata used to drive the consistency of the book. Th
   - [x] Collapsed view shows title, version, and action icons.
   - [x] Clicking expands to edit mode with title input and content editor.
 - [x] The content editor supports **Edit** and **Preview** tabs for markdown.
+- [x] Attribute title and content are **auto-saved** ~2s after the last edit (debounced on idle); the explicit **Save** button remains as the immediate flush.
+- [x] A local draft buffer (localStorage) keeps in-flight attribute text so it survives a crash, tab close or network loss, and is restored when the attribute is edited again.
+- [x] Save and management failures surface as toast notifications instead of failing silently.
 - [x] Attributes can be deleted individually.
 
 ## Versioning
@@ -32,4 +35,4 @@ Attributes are book-level metadata used to drive the consistency of the book. Th
 
 - [x] When a book is deleted, all its attributes and attribute versions are also deleted.
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-06-18_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-16_

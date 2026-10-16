@@ -7,14 +7,16 @@ export default defineNuxtConfig({
   app: {
     head: {
       charset: "utf-16",
-      viewport:
-        "width=device-width, initial-scale=1, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no",
+      viewport: "width=device-width, initial-scale=1, height=device-height",
       title: "Storywriter",
       meta: [
         { name: "description", content: "storywriter" },
         { name: "theme-color", content: "#212121" },
       ],
-      link: [{ rel: "icon", type: "image/svg+xml", href: "/images/logo.svg" }],
+      link: [
+        { rel: "icon", type: "image/svg+xml", href: "/images/logo.svg" },
+        { rel: "apple-touch-icon", href: "/images/logo-192.png" },
+      ],
     },
   },
   css: [
@@ -32,8 +34,30 @@ export default defineNuxtConfig({
   pwa: {
     registerType: "autoUpdate",
     workbox: {
-      globPatterns: [],
+      globPatterns: ["**/*.{js,css,html}", "images/*.{svg,png}"],
+      // @vite-pwa/nuxt rewrites index.html entries to "/" in the precache
+      // manifest, so the fallback must reference "/" not "index.html"
+      navigateFallback: "/",
       cleanupOutdatedCaches: true,
+      runtimeCaching: [
+        {
+          urlPattern: /\.(?:png|jpg|jpeg|gif|webp|svg|woff2?)$/,
+          handler: "CacheFirst",
+          options: {
+            cacheName: "static-assets",
+            expiration: { maxEntries: 100, maxAgeSeconds: 30 * 24 * 60 * 60 },
+          },
+        },
+        {
+          urlPattern: /^\/api\/books\/.*\/media\/.*\/file/,
+          handler: "CacheFirst",
+          options: {
+            cacheName: "media-files",
+            expiration: { maxEntries: 200, maxAgeSeconds: 30 * 24 * 60 * 60 },
+            cacheableResponse: { statuses: [0, 200] },
+          },
+        },
+      ],
     },
     manifest: {
       name: "Storywriter",
@@ -48,6 +72,30 @@ export default defineNuxtConfig({
           src: "images/logo.svg",
           sizes: "512x512",
           type: "image/svg+xml",
+        },
+        {
+          src: "images/logo-192.png",
+          sizes: "192x192",
+          type: "image/png",
+          purpose: "any",
+        },
+        {
+          src: "images/logo-512.png",
+          sizes: "512x512",
+          type: "image/png",
+          purpose: "any",
+        },
+        {
+          src: "images/logo-maskable-192.png",
+          sizes: "192x192",
+          type: "image/png",
+          purpose: "maskable",
+        },
+        {
+          src: "images/logo-maskable-512.png",
+          sizes: "512x512",
+          type: "image/png",
+          purpose: "maskable",
         },
       ],
     },

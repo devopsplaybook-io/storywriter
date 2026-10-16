@@ -171,12 +171,23 @@
 
 <script setup>
 import { marked } from "marked";
+import { watchDebounced } from "@vueuse/core";
+import { useSaveStatusStore } from "../stores/saveStatus";
+import { useToastsStore } from "../stores/toasts";
+import {
+  clearDraft,
+  hasNewerDraft,
+  readDraft,
+  writeDraft,
+} from "../utils/drafts";
 
 const props = defineProps({
   bookId: { type: String, required: true },
 });
 
 const attrStore = useBookAttributesStore();
+const saveStatus = useSaveStatusStore();
+const toastsStore = useToastsStore();
 
 const loading = ref(false);
 const editingId = ref(null);
@@ -207,11 +218,46 @@ function formatDate(dateStr) {
   return new Date(dateStr).toLocaleString();
 }
 
+function currentAttr() {
+  if (!editingId.value) return null;
+  return (
+    attrStore.attributes.find((a) => a.id === editingId.value) || null
+  );
+}
+
+function attrDiff() {
+  const attr = currentAttr();
+  if (!attr) return {};
+  const data = {};
+  if (editTitle.value !== (attr.title || "")) data.title = editTitle.value;
+  if (editContent.value !== (attr.content || ""))
+    data.content = editContent.value;
+  return data;
+}
+
+function currentDraft() {
+  return {
+    title: editTitle.value,
+    content: editContent.value,
+    savedAt: new Date().toISOString(),
+  };
+}
+
 function startEdit(attr) {
   editingId.value = attr.id;
   editTitle.value = attr.title;
   editContent.value = attr.content;
   editTab.value = "edit";
+  if (hasNewerDraft("attribute", attr.id, attr.dateUpdated)) {
+    const draft = readDraft("attribute", attr.id);
+    if (draft) {
+      if (typeof draft.title === "string") editTitle.value = draft.title;
+      if (typeof draft.content === "string")
+        editContent.value = draft.content;
+    }
+  } else {
+    clearDraft("attribute", attr.id);
+  }
 }
 
 function cancelEdit() {
@@ -225,20 +271,100 @@ async function addAttribute() {
     const attr = await attrStore.create(props.bookId, "New Attribute", "");
     startEdit(attr);
   } catch {
-    // silent
+    toastsStore.error("Could not create attribute.");
   }
 }
 
+// Mark the work unsaved as soon as the user edits (before the debounced save)
+watch([editTitle, editContent], () => {
+  if (!editingId.value) return;
+  if (Object.keys(attrDiff()).length > 0) {
+    saveStatus.markUnsaved();
+  }
+});
+
+// A save response replaces the attribute object; if the user kept typing in
+// the meantime, restore the unsaved state that markSaved may have papered over
+watch(
+  () => currentAttr()?.dateUpdated,
+  () => {
+    if (
+      saveStatus.status === "saved" &&
+      Object.keys(attrDiff()).length > 0
+    ) {
+      saveStatus.markUnsaved();
+    }
+  },
+);
+
+// Autosave ~2s after the last edit (the Save button stays as immediate flush)
+watchDebounced([editTitle, editContent], autosaveAttribute, {
+  debounce: 2000,
+});
+
+async function autosaveAttribute() {
+  if (!editingId.value) return;
+  const data = attrDiff();
+  if (Object.keys(data).length === 0) {
+    if (saveStatus.status === "unsaved") saveStatus.markIdle();
+    return;
+  }
+  saveStatus.markSaving();
+  try {
+    await attrStore.update(editingId.value, data);
+    saveStatus.markSaved();
+    clearDraft("attribute", editingId.value);
+  } catch {
+    saveStatus.markError("Attribute save failed");
+    toastsStore.error(
+      "Attribute save failed — your text is kept locally and will retry.",
+    );
+  }
+}
+
+// Local draft buffer so in-flight text survives a crash, tab close or network loss
+watchDebounced(
+  [editTitle, editContent],
+  () => {
+    if (!editingId.value) return;
+    if (Object.keys(attrDiff()).length === 0) return;
+    writeDraft("attribute", editingId.value, currentDraft());
+  },
+  { debounce: 800 },
+);
+
+function flushDraftOnUnload() {
+  if (!editingId.value) return;
+  if (saveStatus.isDirty) {
+    writeDraft("attribute", editingId.value, currentDraft());
+  }
+}
+
+onMounted(() => {
+  window.addEventListener("beforeunload", flushDraftOnUnload);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("beforeunload", flushDraftOnUnload);
+});
+
 async function saveEdit() {
   if (!editingId.value) return;
+  const id = editingId.value;
+  saveStatus.markSaving();
   try {
-    await attrStore.update(editingId.value, {
+    await attrStore.update(id, {
       title: editTitle.value,
       content: editContent.value,
     });
+    saveStatus.markSaved();
+    clearDraft("attribute", id);
     editingId.value = null;
   } catch {
-    // silent
+    saveStatus.markError("Attribute save failed");
+    toastsStore.error(
+      "Attribute save failed — your text is kept locally and will retry.",
+    );
   }
 }
 
@@ -251,8 +377,10 @@ async function saveVersion() {
       content: editContent.value,
     });
     await attrStore.createVersion(editingId.value);
+    clearDraft("attribute", editingId.value);
+    toastsStore.success("Attribute version saved.");
   } catch {
-    // silent
+    toastsStore.error("Could not save attribute version.");
   }
 }
 
@@ -267,7 +395,7 @@ async function deleteAttribute() {
     if (editingId.value === deleteTarget.value.id) cancelEdit();
     deleteTarget.value = null;
   } catch {
-    // silent
+    toastsStore.error("Could not delete attribute.");
   }
 }
 

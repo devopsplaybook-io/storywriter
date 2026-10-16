@@ -58,11 +58,12 @@
             <div class="edit-header">
               <i :class="getIcon(item)" class="edit-icon" />
               <input
-                :value="item.title"
+                :value="pendingEdits[item.id]?.title ?? item.title"
                 class="edit-title-input"
                 :class="'title-depth-' + Math.min(item.depth, 4)"
                 type="text"
                 placeholder="Section title"
+                @input="onTitleInput(item, $event)"
                 @blur="onTitleBlur(item, $event)"
               />
             </div>
@@ -90,7 +91,7 @@
                     if (el) autoResize(el);
                   }
                 "
-                :value="item.content"
+                :value="pendingEdits[item.id]?.content ?? item.content"
                 class="edit-content-textarea"
                 placeholder="Write content in markdown..."
                 @input="onContentInput(item, $event)"
@@ -137,6 +138,7 @@
 
 <script setup>
 import { marked } from "marked";
+import { watchDebounced } from "@vueuse/core";
 import {
   computed,
   nextTick,
@@ -262,6 +264,75 @@ function onContentBlur(item, event) {
   }
 }
 
+// In-flight edits kept per section so server updates never clobber typing
+const pendingEdits = reactive({});
+
+function recordPendingEdit(sectionId, field, value) {
+  const pending = pendingEdits[sectionId] || {};
+  pending[field] = value;
+  pendingEdits[sectionId] = pending;
+}
+
+function onTitleInput(item, event) {
+  recordPendingEdit(item.id, "title", event.target.value);
+}
+
+function flushPendingEdits() {
+  for (const sectionId of Object.keys(pendingEdits)) {
+    const pending = pendingEdits[sectionId];
+    const item = flatSections.value.find((s) => s.id === sectionId);
+    if (!item) {
+      delete pendingEdits[sectionId];
+      continue;
+    }
+    const data = {};
+    if (pending.title !== undefined && pending.title !== item.title) {
+      data.title = pending.title;
+    }
+    if (pending.content !== undefined && pending.content !== item.content) {
+      data.content = pending.content;
+    }
+    if (Object.keys(data).length === 0) {
+      delete pendingEdits[sectionId];
+    } else {
+      emit("update-section", { sectionId, data });
+    }
+  }
+}
+
+// Autosave ~2s after the last edit in any sub-section
+watchDebounced(
+  pendingEdits,
+  flushPendingEdits,
+  { debounce: 2000, deep: true },
+);
+
+// Drop pending edits once the server state has caught up
+watch(flatSections, () => {
+  for (const sectionId of Object.keys(pendingEdits)) {
+    const item = flatSections.value.find((s) => s.id === sectionId);
+    const pending = pendingEdits[sectionId];
+    if (!item) {
+      delete pendingEdits[sectionId];
+      continue;
+    }
+    if (pending.title !== undefined && pending.title === item.title) {
+      delete pending.title;
+    }
+    if (pending.content !== undefined && pending.content === item.content) {
+      delete pending.content;
+    }
+    if (Object.keys(pendingEdits[sectionId]).length === 0) {
+      delete pendingEdits[sectionId];
+    }
+  }
+});
+
+function onContentInput(item, event) {
+  autoResize(event.target);
+  recordPendingEdit(item.id, "content", event.target.value);
+}
+
 function autoResize(el) {
   el.style.height = "auto";
   el.style.height = el.scrollHeight + "px";
@@ -274,10 +345,6 @@ function autoResizeAllTextareas() {
       textareas.forEach((ta) => autoResize(ta));
     });
   });
-}
-
-function onContentInput(item, event) {
-  autoResize(event.target);
 }
 
 function setupObserver() {

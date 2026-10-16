@@ -265,6 +265,9 @@
 <script setup>
 import { useMediaStore } from "../../stores/media";
 import { usePropertiesStore } from "../../stores/properties";
+import { useSaveStatusStore } from "../../stores/saveStatus";
+import { useToastsStore } from "../../stores/toasts";
+import { clearDraft } from "../../utils/drafts";
 
 const route = useRoute();
 const router = useRouter();
@@ -272,6 +275,8 @@ const booksStore = useBooksStore();
 const sectionsStore = useSectionsStore();
 const mediaStore = useMediaStore();
 const propertiesStore = usePropertiesStore();
+const saveStatus = useSaveStatusStore();
+const toastsStore = useToastsStore();
 
 const loading = ref(true);
 const book = ref(null);
@@ -461,17 +466,42 @@ async function addChildSection(parentId, type = "text") {
     );
     selectSection(section.id);
   } catch {
-    // silent
+    toastsStore.error("Could not create section.");
   }
+}
+
+// Serialize saves per section so an older payload can never land after a newer one
+const sectionSaveQueues = new Map();
+
+function queueSectionSave(sectionId, saveFn) {
+  const previous = sectionSaveQueues.get(sectionId) || Promise.resolve();
+  const run = previous.then(saveFn, saveFn);
+  sectionSaveQueues.set(
+    sectionId,
+    run.catch(() => {}),
+  );
+  return run;
+}
+
+function saveSection(sectionId, data) {
+  return queueSectionSave(sectionId, async () => {
+    saveStatus.markSaving();
+    try {
+      await sectionsStore.update(sectionId, data);
+      saveStatus.markSaved();
+      clearDraft("section", sectionId);
+    } catch {
+      saveStatus.markError("Section save failed");
+      toastsStore.error(
+        "Section save failed — your text is kept locally and will retry.",
+      );
+    }
+  });
 }
 
 async function updateSection(data) {
   if (!selectedSectionId.value) return;
-  try {
-    await sectionsStore.update(selectedSectionId.value, data);
-  } catch {
-    // silent
-  }
+  await saveSection(selectedSectionId.value, data);
 }
 
 async function handleReorderChildren({ sourceIndex, targetIndex }) {
@@ -490,17 +520,15 @@ async function handleReorderChildren({ sourceIndex, targetIndex }) {
       }
     }
   } catch {
-    // silent — refetch if needed
+    // Refetch so the UI does not keep an optimistic order that failed to persist
     await sectionsStore.fetchByBook(book.value.id);
+    toastsStore.error("Could not reorder sections.");
   }
 }
 
 async function handleRecursiveUpdateSection({ sectionId, data }) {
-  try {
-    await sectionsStore.update(sectionId, data);
-  } catch {
-    // silent
-  }
+  saveStatus.markUnsaved();
+  await saveSection(sectionId, data);
 }
 
 async function handleSaveVersion() {
@@ -511,7 +539,7 @@ async function handleSaveVersion() {
     showSaveVersionDialog.value = false;
     versionNote.value = "";
   } catch {
-    // silent
+    toastsStore.error("Could not save version.");
   } finally {
     savingVersion.value = false;
   }
@@ -537,7 +565,7 @@ async function handleVersionRestored() {
 
 function confirmDeleteSection(id) {
   if (sectionsStore.rootSection?.id === id) {
-    alert("Cannot delete the root section.");
+    toastsStore.error("The root section cannot be deleted.");
     return;
   }
   deleteSectionTarget.value = id;
@@ -552,9 +580,24 @@ async function deleteSection() {
     }
     deleteSectionTarget.value = null;
   } catch {
-    // silent
+    toastsStore.error("Could not delete section.");
   }
 }
+
+// Warn before leaving with unsaved work
+function beforeUnloadGuard(event) {
+  if (!saveStatus.isDirty) return;
+  event.preventDefault();
+  event.returnValue = "";
+}
+
+onMounted(() => {
+  window.addEventListener("beforeunload", beforeUnloadGuard);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("beforeunload", beforeUnloadGuard);
+});
 
 onMounted(async () => {
   await loadBook();

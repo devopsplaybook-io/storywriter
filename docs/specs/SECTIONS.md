@@ -79,8 +79,12 @@ Sections are the structural building blocks of a book. They form a hierarchical 
 - [x] Section type can be changed via a dropdown in the header.
 - [x] Media sections have a media selector and caption textarea.
 - [x] Section type labels can be toggled on/off via badges below the title.
+- [x] Section content is **auto-saved** ~2s after the last edit (debounced on idle) for title, content and caption; saving on blur remains as the immediate flush.
+- [x] A global **save-status indicator** in the editor header shows unsaved → saving → saved → error.
+- [x] The browser warns before closing or reloading the tab while there is unsaved work (`beforeunload` guard).
+- [x] A local draft buffer (localStorage) keeps in-flight text so it survives a crash, tab close or network loss, and is restored on the next open.
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-06-18_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-16_
 
 # Sections
 

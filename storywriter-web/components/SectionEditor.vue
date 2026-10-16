@@ -11,6 +11,14 @@
           @keydown.enter="$refs.contentRef?.focus()"
         />
         <div class="header-actions">
+          <span
+            v-if="saveStatus.status !== 'idle'"
+            class="save-status"
+            :class="saveStatus.status"
+          >
+            <i :class="statusIcon" />
+            {{ statusLabel }}
+          </span>
           <span class="type-badge">
             <i :class="typeIcon" />
             {{ section.type }}
@@ -108,9 +116,17 @@
 
 <script setup>
 import { marked } from "marked";
-import { computed, ref, watch } from "vue";
+import { watchDebounced } from "@vueuse/core";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useMediaStore } from "../stores/media";
 import { usePropertiesStore } from "../stores/properties";
+import { useSaveStatusStore } from "../stores/saveStatus";
+import {
+  clearDraft,
+  hasNewerDraft,
+  readDraft,
+  writeDraft,
+} from "../utils/drafts";
 
 const props = defineProps({
   section: { type: Object, default: null },
@@ -123,6 +139,7 @@ const emit = defineEmits(["update", "reorder"]);
 
 const mediaStore = useMediaStore();
 const propertiesStore = usePropertiesStore();
+const saveStatus = useSaveStatusStore();
 
 const contentRef = ref(null);
 const tab = ref("edit");
@@ -212,12 +229,150 @@ watch(
       content.value = props.section.content || "";
       selectedMediaId.value = props.section.mediaId || null;
       caption.value = props.section.caption || "";
+      if (
+        hasNewerDraft(
+          "section",
+          props.section.id,
+          props.section.dateUpdated,
+        )
+      ) {
+        const draft = readDraft("section", props.section.id);
+        if (draft) {
+          if (typeof draft.title === "string") title.value = draft.title;
+          if (typeof draft.content === "string") content.value = draft.content;
+          if (typeof draft.caption === "string") caption.value = draft.caption;
+          if (draft.mediaId !== undefined)
+            selectedMediaId.value = draft.mediaId;
+        }
+      } else {
+        clearDraft("section", props.section.id);
+      }
       // Fetch section values for section types
       await propertiesStore.fetchSectionValues(props.section.id);
     }
   },
   { immediate: true },
 );
+
+function diffFromServer() {
+  if (!props.section) return {};
+  const data = {};
+  if (title.value !== (props.section.title || ""))
+    data.title = title.value;
+  if (content.value !== (props.section.content || ""))
+    data.content = content.value;
+  if (caption.value !== (props.section.caption || ""))
+    data.caption = caption.value;
+  if ((selectedMediaId.value || null) !== (props.section.mediaId || null))
+    data.mediaId = selectedMediaId.value || null;
+  return data;
+}
+
+function currentDraft() {
+  return {
+    title: title.value,
+    content: content.value,
+    caption: caption.value,
+    mediaId: selectedMediaId.value || null,
+    savedAt: new Date().toISOString(),
+  };
+}
+
+// Mark the work unsaved as soon as the user edits (before the debounced save)
+watch([title, content, caption, selectedMediaId], () => {
+  if (!props.section) return;
+  if (Object.keys(diffFromServer()).length > 0) {
+    saveStatus.markUnsaved();
+  }
+});
+
+// A save response replaces the section object; if the user kept typing in the
+// meantime, restore the unsaved state that markSaved may have papered over
+watch(
+  () => props.section,
+  () => {
+    if (!props.section) return;
+    if (
+      saveStatus.status === "saved" &&
+      Object.keys(diffFromServer()).length > 0
+    ) {
+      saveStatus.markUnsaved();
+    }
+  },
+);
+
+// Autosave ~2s after the last edit
+watchDebounced(
+  [title, content, caption, selectedMediaId],
+  () => {
+    if (!props.section) return;
+    const data = diffFromServer();
+    if (Object.keys(data).length > 0) {
+      emit("update", data);
+    } else if (saveStatus.status === "unsaved") {
+      saveStatus.markIdle();
+    }
+  },
+  { debounce: 2000 },
+);
+
+// Local draft buffer so in-flight text survives a crash, tab close or network loss
+watchDebounced(
+  [title, content, caption, selectedMediaId],
+  () => {
+    if (!props.section) return;
+    if (Object.keys(diffFromServer()).length === 0) return;
+    writeDraft("section", props.section.id, currentDraft());
+  },
+  { debounce: 800 },
+);
+
+function flushDraftOnUnload() {
+  if (!props.section) return;
+  if (saveStatus.isDirty) {
+    writeDraft("section", props.section.id, currentDraft());
+  }
+}
+
+onMounted(() => {
+  window.addEventListener("beforeunload", flushDraftOnUnload);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("beforeunload", flushDraftOnUnload);
+});
+
+const statusIcon = computed(() => {
+  switch (saveStatus.status) {
+    case "unsaved":
+      return "bi bi-pencil";
+    case "saving":
+      return "bi bi-arrow-repeat";
+    case "saved":
+      return "bi bi-check-lg";
+    case "error":
+      return "bi bi-exclamation-triangle";
+    default:
+      return "";
+  }
+});
+
+const statusLabel = computed(() => {
+  switch (saveStatus.status) {
+    case "unsaved":
+      return "Unsaved";
+    case "saving":
+      return "Saving…";
+    case "saved":
+      return saveStatus.lastSavedAt
+        ? `Saved ${new Date(saveStatus.lastSavedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+        : "Saved";
+    case "error":
+      return "Save failed";
+    default:
+      return "";
+  }
+});
 
 function saveTitle() {
   if (!props.section || title.value === (props.section.title || "")) return;
@@ -333,6 +488,43 @@ function saveCaption() {
   color: var(--pico-muted-color, #aaa);
   text-transform: capitalize;
   white-space: nowrap;
+}
+
+.save-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  padding: var(--space-2xs) var(--space-xs);
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  border: 1px solid var(--pico-muted-border-color, #444);
+  color: var(--pico-muted-color, #aaa);
+  white-space: nowrap;
+}
+
+.save-status.saved {
+  color: var(--color-status-done, #198754);
+  border-color: var(--color-status-done, #198754);
+}
+
+.save-status.error {
+  color: var(--color-status-blocked, #dc3545);
+  border-color: var(--color-status-blocked, #dc3545);
+}
+
+.save-status.saving i {
+  display: inline-block;
+  animation: save-spin 1s linear infinite;
+}
+
+@keyframes save-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .btn-icon {

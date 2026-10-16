@@ -1,19 +1,24 @@
 # User Interface
 
 The web interface is a **Progressive Web Application (PWA)**.
-It is installable on mobile and desktop devices and works offline.
+It is installable on mobile and desktop devices; the app shell (interface, styles and icons) is available offline, while loading and saving content requires connectivity.
 
 ## Characteristics
 
 - [x] **Responsive**: Adapts to all screen sizes from mobile to desktop.
-- [x] **PWA**: Installable with offline support, configured via `@vite-pwa/nuxt`.
+- [x] **PWA**: Installable, configured via `@vite-pwa/nuxt`.
+- [x] **Offline app shell**: The service worker precaches the app shell (HTML/JS/CSS and icon images); static assets and book media files are cached at runtime; API data responses are never cached so saved content stays honest and fresh.
+- [x] **Offline banner**: An unobtrusive banner tells the user when the browser is offline and what still works.
+- [x] **PNG app icons**: 192/512 `any` plus 192/512 `maskable` PNG icons so installation works across platforms (SVG icon kept for browsers that prefer it).
+- [x] **Toast notifications**: A small global toast system surfaces save and action errors (and successes) instead of silent failures.
+- [x] **Unrestricted zoom**: The page viewport does not block pinch-zoom (no `user-scalable=no` / `maximum-scale`).
 
 ## Navigation
 
 - [x] There is a **top header menu** to switch between views (Books, Admin, Settings).
 - [x] On mobile, nav labels are hidden and only icons are shown.
 - [x] On intermediate screens, the brand name is hidden.
-- [x] Offline support (PWA configured with service worker, cache strategies).
+- [x] Offline support: the app shell is served from the precache and an offline banner appears when the browser is offline.
 
 ## Book Detail Layout
 
@@ -81,4 +86,4 @@ The book detail page uses a **responsive split-pane layout** following the feedw
 - [x] **Markdown body**: `.markdown-body` class for rendered markdown content.
 - [x] **Design tokens**: CSS custom properties for spacing (`--space-*`), radius (`--radius-*`), typography (`--text-*`), transitions (`--transition-*`), and shadows (`--shadow-*`).
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-06-18_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-16_
