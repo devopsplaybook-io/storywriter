@@ -124,6 +124,7 @@
 import { computed, ref, watch } from "vue";
 import { useBooksStore } from "../stores/books";
 import { useSectionsStore } from "../stores/sections";
+import { useToastsStore } from "../stores/toasts";
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -134,6 +135,7 @@ const emit = defineEmits(["close", "load-version", "close-version", "restored"])
 
 const booksStore = useBooksStore();
 const sectionsStore = useSectionsStore();
+const toastsStore = useToastsStore();
 
 const loading = ref(false);
 const versions = ref([]);
@@ -210,7 +212,7 @@ async function restoreVersion() {
     emit("restored");
     emit("close");
   } catch (e) {
-    alert(e.response?.data?.error || "Failed to restore version");
+    toastsStore.error(e.response?.data?.error || "Failed to restore version");
   } finally {
     restoring.value = false;
   }

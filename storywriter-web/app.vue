@@ -5,8 +5,10 @@
       <Navigation />
     </header>
     <main>
+      <OfflineBanner />
       <NuxtPage />
     </main>
+    <ToastHost />
   </div>
 </template>
 
