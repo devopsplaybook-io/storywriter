@@ -100,14 +100,25 @@ export const useBooksStore = defineStore("books", {
       return res.data;
     },
 
-    async exportBook(bookId: string) {
+    async exportBook(
+      bookId: string,
+      format = "targz",
+      include = "content",
+    ) {
       const res = await api.get(`/books/${bookId}/export`, {
         responseType: "blob",
+        params: { format, include },
       });
       const url = window.URL.createObjectURL(res.data);
       const a = document.createElement("a");
       a.href = url;
-      const filename = res.headers["x-filename"] || "book-export.tar.gz";
+      const fallbackNames: Record<string, string> = {
+        targz: "book-export.tar.gz",
+        markdown: "book-export.md",
+        docx: "book-export.docx",
+        epub: "book-export.epub",
+      };
+      const filename = res.headers["x-filename"] || fallbackNames[format] || "book-export.tar.gz";
       a.download = filename;
       document.body.appendChild(a);
       a.click();

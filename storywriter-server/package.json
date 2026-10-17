@@ -1,6 +1,6 @@
 {
   "name": "storywriter-server",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "author": "",
   "license": "MIT",
   "scripts": {
@@ -19,6 +19,7 @@
     "@fastify/cors": "^11.3.1",
     "@fastify/multipart": "^10.1.4",
     "@fastify/static": "^10.1.6",
+    "@turbodocx/html-to-docx": "^1.23.1",
     "archiver": "^8.0.0",
     "axios": "^1.20.0",
     "bcrypt": "^6.0.0",
@@ -26,6 +27,7 @@
     "fastify": "^5.12.7",
     "fs-extra": "^11.4.1",
     "jsonwebtoken": "^9.0.3",
+    "marked": "^18.1.1",
     "tar": "^7.5.22",
     "uuid": "^14.0.3"
   },
