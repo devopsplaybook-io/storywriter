@@ -83,6 +83,12 @@ Sections are the structural building blocks of a book. They form a hierarchical 
 - [x] A global **save-status indicator** in the editor header shows unsaved → saving → saved → error.
 - [x] The browser warns before closing or reloading the tab while there is unsaved work (`beforeunload` guard).
 - [x] A local draft buffer (localStorage) keeps in-flight text so it survives a crash, tab close or network loss, and is restored on the next open.
+- [x] A **live word count** for the section (markdown stripped) is shown in the editor header and updates per keystroke.
+- [x] The sidebar shows the **running word total for the book**, live between autosave ticks; when a writing goal is set it shows the target, the percentage and a progress bar.
+- [x] **Focus mode** collapses the sidebar, book nav and global header for distraction-free writing (centered measure); toggled via the editor button or Ctrl/Cmd+Shift+F, exits with Escape; an optional typewriter-scrolling preference persists in localStorage.
+- [x] A compact **formatting toolbar** (bold, italic, heading, lists, quote, inline code, link, image) inserts markdown around the selection and keeps focus.
+- [x] Keyboard shortcuts in the editor: Ctrl/Cmd+B (bold), Ctrl/Cmd+I (italic), Ctrl/Cmd+K (link), Ctrl/Cmd+F (find & replace).
+- [x] **Find & replace** within the section: match counter, previous/next navigation (Enter / Shift+Enter), replace current and replace all; closes with Escape.
 
 ## Restructuring
 
@@ -92,7 +98,7 @@ Sections are the structural building blocks of a book. They form a hierarchical 
 - [x] Duplicating a section copies it with its whole subtree, keeping type, media and caption; the copy is inserted right after the original.
 - [x] A keyboard-accessible "Move to…" dialog moves a section to any allowed container for touch and screen-reader users.
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-16_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-17_
 
 # Sections
 

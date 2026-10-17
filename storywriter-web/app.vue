@@ -85,6 +85,11 @@ header {
   min-height: var(--header-height, 3em);
 }
 
+/* Focus mode: hide the global nav while writing (toggled from the book page) */
+body.focus-mode #page-layout > header {
+  display: none;
+}
+
 header,
 main {
   padding: var(--space-sm);

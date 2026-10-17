@@ -25,6 +25,16 @@
             rows="3"
           />
         </label>
+        <label>
+          Writing Goal (words)
+          <input
+            v-model.number="form.writingGoal"
+            type="number"
+            min="0"
+            step="100"
+            placeholder="0 = no goal"
+          />
+        </label>
         <footer class="dialog-footer">
           <button type="submit" :aria-busy="saving">
             {{ isEdit ? "Save" : "Create" }}
@@ -50,7 +60,7 @@ const saving = ref(false);
 
 const isEdit = computed(() => !!props.book?.id);
 
-const form = ref({ name: "", description: "" });
+const form = ref({ name: "", description: "", writingGoal: 0 });
 
 watch(
   () => props.open,
@@ -59,9 +69,10 @@ watch(
       form.value = {
         name: props.book.name || "",
         description: props.book.description || "",
+        writingGoal: Number(props.book.writingGoal) || 0,
       };
     } else if (val) {
-      form.value = { name: "", description: "" };
+      form.value = { name: "", description: "", writingGoal: 0 };
     }
   },
 );
@@ -69,7 +80,8 @@ watch(
 async function handleSubmit() {
   saving.value = true;
   try {
-    emit("save", { ...form.value });
+    const goal = Math.max(0, Math.floor(Number(form.value.writingGoal) || 0));
+    emit("save", { ...form.value, writingGoal: goal });
   } finally {
     saving.value = false;
   }

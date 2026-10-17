@@ -11,6 +11,10 @@
           @keydown.enter="$refs.contentRef?.focus()"
         />
         <div class="header-actions">
+          <span class="word-count" title="Word count (markdown stripped)">
+            <i class="bi bi-123" />
+            {{ sectionWordCount }} words
+          </span>
           <span
             v-if="saveStatus.status !== 'idle'"
             class="save-status"
@@ -23,6 +27,23 @@
             <i :class="typeIcon" />
             {{ section.type }}
           </span>
+          <button
+            v-if="focusMode"
+            class="btn-icon"
+            :class="{ active: typewriter }"
+            title="Typewriter scrolling"
+            @click="toggleTypewriter"
+          >
+            <i class="bi bi-align-center" />
+          </button>
+          <button
+            class="btn-icon"
+            :class="{ active: focusMode }"
+            title="Focus mode (Ctrl/Cmd+Shift+F)"
+            @click="$emit('toggle-focus')"
+          >
+            <i class="bi bi-arrows-angle-expand" />
+          </button>
         </div>
       </header>
 
@@ -83,16 +104,78 @@
 
       <!-- Text section: show editor tabs -->
       <div v-if="section.type === 'text'" class="text-editor-section">
-        <div class="editor-tabs">
-          <button :class="{ active: tab === 'edit' }" @click="tab = 'edit'">
-            <i class="bi bi-pencil" /> Edit
-          </button>
-          <button
-            :class="{ active: tab === 'preview' }"
-            @click="tab = 'preview'"
-          >
-            <i class="bi bi-eye" /> Preview
-          </button>
+        <div class="editor-toolbar-row">
+          <div class="editor-tabs">
+            <button :class="{ active: tab === 'edit' }" @click="tab = 'edit'">
+              <i class="bi bi-pencil" /> Edit
+            </button>
+            <button
+              :class="{ active: tab === 'preview' }"
+              @click="tab = 'preview'"
+            >
+              <i class="bi bi-eye" /> Preview
+            </button>
+          </div>
+          <div class="format-toolbar">
+            <button title="Bold (Ctrl/Cmd+B)" @click.prevent="applyFormat('bold')"><i class="bi bi-type-bold" /></button>
+            <button title="Italic (Ctrl/Cmd+I)" @click.prevent="applyFormat('italic')"><i class="bi bi-type-italic" /></button>
+            <button title="Heading (H2)" @click.prevent="applyFormat('h2')"><i class="bi bi-type-h2" /></button>
+            <button title="Bullet list" @click.prevent="applyFormat('bullet')"><i class="bi bi-list-ul" /></button>
+            <button title="Numbered list" @click.prevent="applyFormat('numbered')"><i class="bi bi-list-ol" /></button>
+            <button title="Quote" @click.prevent="applyFormat('quote')"><i class="bi bi-quote" /></button>
+            <button title="Inline code" @click.prevent="applyFormat('code')"><i class="bi bi-code-slash" /></button>
+            <button title="Link (Ctrl/Cmd+K)" @click.prevent="applyFormat('link')"><i class="bi bi-link-45deg" /></button>
+            <button title="Image" @click.prevent="applyFormat('image')"><i class="bi bi-card-image" /></button>
+            <button
+              title="Find & Replace (Ctrl/Cmd+F)"
+              :class="{ active: findOpen }"
+              @click.prevent="toggleFind"
+            >
+              <i class="bi bi-search" />
+            </button>
+          </div>
+        </div>
+
+        <div
+          v-if="findOpen"
+          class="find-replace-bar"
+          @keydown.esc.prevent="closeFind"
+        >
+          <div class="find-row">
+            <input
+              ref="findInput"
+              v-model="findQuery"
+              type="text"
+              class="find-input"
+              placeholder="Find"
+              @keydown.enter.prevent="nextMatch"
+              @keydown.esc.prevent="closeFind"
+            />
+            <span class="match-count">
+              {{ matchIndices.length ? currentMatchIndex + 1 : 0 }} of
+              {{ matchIndices.length }}
+            </span>
+            <button class="tool-btn" title="Previous match (Shift+Enter)" @click.prevent="prevMatch">
+              <i class="bi bi-chevron-up" />
+            </button>
+            <button class="tool-btn" title="Next match (Enter)" @click.prevent="nextMatch">
+              <i class="bi bi-chevron-down" />
+            </button>
+          </div>
+          <div class="find-row">
+            <input
+              v-model="replaceQuery"
+              type="text"
+              class="find-input"
+              placeholder="Replace with"
+              @keydown.esc.prevent="closeFind"
+            />
+            <button class="tool-btn" title="Replace current match" @click.prevent="replaceCurrent">Replace</button>
+            <button class="tool-btn" title="Replace all matches" @click.prevent="replaceAll">All</button>
+            <button class="tool-btn" title="Close find & replace (Esc)" @click.prevent="closeFind">
+              <i class="bi bi-x-lg" />
+            </button>
+          </div>
         </div>
 
         <div v-if="tab === 'edit'" class="editor-content">
@@ -102,6 +185,9 @@
             class="content-textarea"
             placeholder="Write your content in markdown..."
             @blur="saveContent"
+            @keydown="onTextareaKeydown"
+            @input="onCaretMoved"
+            @keyup="onCaretMoved"
           />
         </div>
         <div v-else class="preview-content" v-html="renderedContent" />
@@ -117,29 +203,34 @@
 <script setup>
 import { marked } from "marked";
 import { watchDebounced } from "@vueuse/core";
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useMediaStore } from "../stores/media";
 import { usePropertiesStore } from "../stores/properties";
 import { useSaveStatusStore } from "../stores/saveStatus";
+import { useSectionsStore } from "../stores/sections";
 import {
   clearDraft,
   hasNewerDraft,
   readDraft,
   writeDraft,
 } from "../utils/drafts";
+import { countWords } from "../utils/wordCount";
+import { insertLink, insertPrefix, wrapSelection } from "../utils/markdownEdit";
 
 const props = defineProps({
   section: { type: Object, default: null },
   mediaList: { type: Array, default: () => [] },
   children: { type: Array, default: () => [] },
   getChildren: { type: Function, default: () => () => [] },
+  focusMode: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["update", "reorder"]);
+const emit = defineEmits(["update", "reorder", "toggle-focus"]);
 
 const mediaStore = useMediaStore();
 const propertiesStore = usePropertiesStore();
 const saveStatus = useSaveStatusStore();
+const sectionsStore = useSectionsStore();
 
 const contentRef = ref(null);
 const tab = ref("edit");
@@ -169,6 +260,219 @@ const assignedSectionTypes = computed(() => {
   if (!props.section) return [];
   return propertiesStore.getSectionTypes(props.section.id);
 });
+
+const sectionWordCount = computed(() => countWords(content.value));
+
+// Keep the store's live content in sync so the book total updates per keystroke
+watch(content, (value) => {
+  if (props.section) {
+    sectionsStore.setLiveContent(props.section.id, value);
+  }
+});
+
+// ==================== Typewriter scrolling (focus mode) ====================
+
+const typewriter = ref(
+  typeof window !== "undefined"
+    ? localStorage.getItem("storywriter.typewriter") === "true"
+    : false,
+);
+
+function toggleTypewriter() {
+  typewriter.value = !typewriter.value;
+  try {
+    localStorage.setItem("storywriter.typewriter", String(typewriter.value));
+  } catch {
+    // Best-effort preference persistence
+  }
+}
+
+// Approximation: counts hard newlines before the caret (soft wraps not
+// accounted for), then centers that line vertically in the textarea.
+function scrollCaretToCenter() {
+  if (!typewriter.value) return;
+  const el = contentRef.value;
+  if (!el) return;
+  const style = window.getComputedStyle(el);
+  const lineHeight =
+    parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.6 || 24;
+  const lineIndex = content.value.slice(0, el.selectionStart).split("\n")
+    .length - 1;
+  el.scrollTop = Math.max(0, lineIndex * lineHeight - el.clientHeight / 2);
+}
+
+function onCaretMoved() {
+  if (tab.value !== "edit" || !typewriter.value) return;
+  nextTick(scrollCaretToCenter);
+}
+
+// ==================== Markdown formatting ====================
+
+function applySelection(edit) {
+  const el = contentRef.value;
+  if (!el) return;
+  const result = edit(content.value, el.selectionStart, el.selectionEnd);
+  content.value = result.value;
+  nextTick(() => {
+    el.focus();
+    el.setSelectionRange(result.selectionStart, result.selectionEnd);
+    onCaretMoved();
+  });
+}
+
+function applyFormat(kind) {
+  switch (kind) {
+    case "bold":
+      applySelection((v, s, e) => wrapSelection(v, s, e, "**"));
+      break;
+    case "italic":
+      applySelection((v, s, e) => wrapSelection(v, s, e, "*"));
+      break;
+    case "code":
+      applySelection((v, s, e) => wrapSelection(v, s, e, "`"));
+      break;
+    case "link":
+      applySelection((v, s, e) => insertLink(v, s, e));
+      break;
+    case "image":
+      applySelection((v, s, e) => wrapSelection(v, s, e, "![", "](slug)"));
+      break;
+    case "h2":
+      applySelection((v, s, e) => insertPrefix(v, s, e, "## "));
+      break;
+    case "bullet":
+      applySelection((v, s, e) => insertPrefix(v, s, e, "- "));
+      break;
+    case "numbered":
+      applySelection((v, s, e) => insertPrefix(v, s, e, "1. "));
+      break;
+    case "quote":
+      applySelection((v, s, e) => insertPrefix(v, s, e, "> "));
+      break;
+  }
+}
+
+function onTextareaKeydown(event) {
+  const mod = event.ctrlKey || event.metaKey;
+  if (mod && !event.altKey) {
+    const key = event.key.toLowerCase();
+    if (key === "b") {
+      event.preventDefault();
+      applyFormat("bold");
+      return;
+    }
+    if (key === "i") {
+      event.preventDefault();
+      applyFormat("italic");
+      return;
+    }
+    if (key === "k") {
+      event.preventDefault();
+      applyFormat("link");
+      return;
+    }
+    if (key === "f" && !event.shiftKey) {
+      event.preventDefault();
+      openFind();
+      return;
+    }
+  }
+  if (event.key === "Escape" && findOpen.value) {
+    event.preventDefault();
+    closeFind();
+  }
+}
+
+// ==================== Find & replace ====================
+
+const findOpen = ref(false);
+const findInput = ref(null);
+const findQuery = ref("");
+const replaceQuery = ref("");
+const currentMatchIndex = ref(0);
+
+const matchIndices = computed(() => {
+  const needle = findQuery.value.toLowerCase();
+  if (!needle) return [];
+  const haystack = content.value.toLowerCase();
+  const indices = [];
+  let index = haystack.indexOf(needle);
+  while (index >= 0) {
+    indices.push(index);
+    index = haystack.indexOf(needle, index + needle.length);
+  }
+  return indices;
+});
+
+function openFind() {
+  findOpen.value = true;
+  const el = contentRef.value;
+  if (el && !findQuery.value) {
+    const selected = content.value.slice(el.selectionStart, el.selectionEnd);
+    if (selected && !selected.includes("\n")) {
+      findQuery.value = selected;
+    }
+  }
+  nextTick(() => findInput.value?.focus());
+}
+
+function closeFind() {
+  findOpen.value = false;
+  currentMatchIndex.value = 0;
+  nextTick(() => contentRef.value?.focus());
+}
+
+function toggleFind() {
+  if (findOpen.value) {
+    closeFind();
+  } else {
+    openFind();
+  }
+}
+
+function focusMatchAt(index) {
+  const el = contentRef.value;
+  if (!el) return;
+  el.focus();
+  el.setSelectionRange(index, index + findQuery.value.length);
+}
+
+function nextMatch() {
+  if (!matchIndices.value.length) return;
+  currentMatchIndex.value =
+    (currentMatchIndex.value + 1) % matchIndices.value.length;
+  focusMatchAt(matchIndices.value[currentMatchIndex.value]);
+}
+
+function prevMatch() {
+  if (!matchIndices.value.length) return;
+  currentMatchIndex.value =
+    (currentMatchIndex.value - 1 + matchIndices.value.length) %
+    matchIndices.value.length;
+  focusMatchAt(matchIndices.value[currentMatchIndex.value]);
+}
+
+function replaceCurrent() {
+  if (!matchIndices.value.length) return;
+  const at = matchIndices.value[currentMatchIndex.value];
+  const next =
+    content.value.slice(0, at) +
+    replaceQuery.value +
+    content.value.slice(at + findQuery.value.length);
+  content.value = next;
+  nextTick(() => {
+    if (matchIndices.value.length) {
+      currentMatchIndex.value = currentMatchIndex.value % matchIndices.value.length;
+      focusMatchAt(matchIndices.value[currentMatchIndex.value]);
+    }
+  });
+}
+
+function replaceAll() {
+  const needle = findQuery.value;
+  if (!needle) return;
+  content.value = content.value.split(needle).join(replaceQuery.value);
+}
 
 async function toggleSectionType(typeName) {
   if (!props.section) return;
@@ -685,6 +989,103 @@ function saveCaption() {
 
 .empty-hint {
   opacity: 0.6;
+}
+
+.word-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  padding: var(--space-2xs) var(--space-xs);
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  border: 1px solid var(--pico-muted-border-color, #444);
+  color: var(--pico-muted-color, #aaa);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.editor-toolbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.format-toolbar {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+
+.format-toolbar button {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  padding: var(--space-3xs, 2px) var(--space-2xs);
+  font-size: var(--text-md);
+  color: var(--pico-muted-color);
+  line-height: 1;
+}
+
+.format-toolbar button:hover {
+  border-color: var(--pico-muted-border-color, #444);
+  color: var(--pico-primary);
+}
+
+.format-toolbar button.active {
+  color: var(--pico-primary);
+  border-color: var(--pico-primary);
+}
+
+.find-replace-bar {
+  display: grid;
+  gap: var(--space-2xs);
+  padding: var(--space-2xs) var(--space-xs);
+  border: 1px solid var(--pico-muted-border-color, #444);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--pico-card-background-color, rgba(255, 255, 255, 0.02));
+}
+
+.find-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+.find-input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-3xs, 2px) var(--space-2xs);
+  margin: 0;
+  height: auto;
+  font-size: var(--text-sm);
+  font-family: var(--font-mono, monospace);
+}
+
+.match-count {
+  font-size: var(--text-xs);
+  color: var(--pico-muted-color);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-btn {
+  background: none;
+  border: 1px solid var(--pico-muted-border-color, #444);
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  padding: var(--space-3xs, 2px) var(--space-2xs);
+  font-size: var(--text-xs);
+  color: var(--pico-muted-color);
+  white-space: nowrap;
+}
+
+.tool-btn:hover {
+  border-color: var(--pico-primary);
+  color: var(--pico-primary);
 }
 
 /* Mobile: stack header, full-width textareas */

@@ -18,6 +18,7 @@ describe("Book", () => {
       expect(book.id).toBe("test-uuid-1");
       expect(book.description).toBe("");
       expect(book.dateCreated).toBeDefined();
+      expect(book.writingGoal).toBe(0);
     });
   });
 
@@ -46,6 +47,43 @@ describe("Book", () => {
       expect(book.name).toBe("Test Book");
       expect(book.description).toBe("");
       expect(book.dateCreated).toBeDefined();
+      expect(book.writingGoal).toBe(0);
+    });
+  });
+
+  describe("writingGoal", () => {
+    it("fromJson coerces numeric values", () => {
+      const book = Book.fromJson({ name: "B", writingGoal: 50000 });
+      expect(book.writingGoal).toBe(50000);
+    });
+
+    it("fromJson coerces numeric strings", () => {
+      const book = Book.fromJson({ name: "B", writingGoal: "1200" });
+      expect(book.writingGoal).toBe(1200);
+    });
+
+    it("fromJson clamps negatives to 0 and floors fractions", () => {
+      expect(Book.fromJson({ name: "B", writingGoal: -5 }).writingGoal).toBe(0);
+      expect(Book.fromJson({ name: "B", writingGoal: 10.9 }).writingGoal).toBe(
+        10,
+      );
+    });
+
+    it("fromJson falls back to 0 for garbage values", () => {
+      expect(Book.fromJson({ name: "B", writingGoal: "abc" }).writingGoal).toBe(
+        0,
+      );
+      expect(Book.fromJson({ name: "B", writingGoal: null }).writingGoal).toBe(
+        0,
+      );
+      expect(Book.fromJson({ name: "B", writingGoal: NaN }).writingGoal).toBe(0);
+    });
+
+    it("toJson and toTransportJson round-trip the goal", () => {
+      const book = new Book();
+      book.writingGoal = 750;
+      expect(book.toJson().writingGoal).toBe(750);
+      expect(book.toTransportJson().writingGoal).toBe(750);
     });
   });
 

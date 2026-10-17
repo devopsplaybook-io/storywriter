@@ -180,6 +180,10 @@ export async function BookImportRun(
     newBook.name = bookData.name;
     newBook.description = bookData.description || "";
     newBook.dateCreated = bookData.dateCreated || new Date().toISOString();
+    newBook.writingGoal = Math.max(
+      0,
+      Math.floor(Number(bookData.writingGoal) || 0),
+    );
     await BooksDataAdd(newBook);
 
     // Create ID mappings

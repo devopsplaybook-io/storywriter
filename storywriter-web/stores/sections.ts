@@ -1,5 +1,6 @@
 import { acceptHMRUpdate, defineStore } from "pinia";
 import api from "../utils/api";
+import { countBookWords } from "../utils/wordCount";
 
 export type SectionType = "text" | "container" | "media";
 
@@ -22,6 +23,9 @@ export const useSectionsStore = defineStore("sections", {
   state: () => ({
     sections: [] as Section[],
     currentSection: null as Section | null,
+    // Live (unsaved) editor content per section id, so the book word total is
+    // up to date between autosave ticks
+    liveContent: {} as Record<string, string>,
   }),
 
   getters: {
@@ -31,12 +35,19 @@ export const useSectionsStore = defineStore("sections", {
       state.sections
         .filter((s) => s.parentId === parentId)
         .sort((a, b) => a.orderIndex - b.orderIndex),
+    bookWordCount: (state) =>
+      countBookWords(state.sections, state.liveContent),
   },
 
   actions: {
+    setLiveContent(id: string, content: string) {
+      this.liveContent[id] = content;
+    },
+
     async fetchByBook(bookId: string) {
       const res = await api.get("/sections", { params: { bookId } });
       this.sections = res.data;
+      this.liveContent = {};
     },
 
     async fetchById(id: string) {
@@ -108,6 +119,9 @@ export const useSectionsStore = defineStore("sections", {
     async remove(id: string) {
       await api.delete(`/sections/${id}`);
       this.sections = this.sections.filter((s) => s.id !== id);
+      this.liveContent = Object.fromEntries(
+        Object.entries(this.liveContent).filter(([key]) => key !== id),
+      );
       if (this.currentSection?.id === id) this.currentSection = null;
     },
   },
