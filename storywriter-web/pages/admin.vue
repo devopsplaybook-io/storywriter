@@ -13,6 +13,30 @@
     <template v-else>
       <section>
         <header class="section-header">
+          <h2>AI Assistance</h2>
+        </header>
+        <div class="ai-status-card">
+          <p class="ai-status-line">
+            <template v-if="llm.loaded && llm.available">
+              <i class="bi bi-check-circle-fill ai-status-ok" />
+              Available — model <strong>{{ llm.model || "(default)" }}</strong>
+            </template>
+            <template v-else-if="llm.loaded">
+              <i class="bi bi-x-circle-fill ai-status-off" />
+              Not configured — set <code>LLM_API_KEY</code>
+              (and optionally <code>LLM_API_URL</code>, <code>LLM_MODEL</code>)
+              in the server configuration or environment.
+            </template>
+            <template v-else>
+              <i class="bi bi-arrow-repeat ai-status-loading" />
+              Checking availability…
+            </template>
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <header class="section-header">
           <h2>Users</h2>
           <button @click="showCreateDialog = true">
             <i class="bi bi-plus-lg" /> Add User
@@ -137,9 +161,11 @@
 
 <script setup>
 import api from "../utils/api";
+import { useLlmStore } from "../stores/llm";
 
 const authStore = useAuthStore();
 const router = useRouter();
+const llm = useLlmStore();
 
 const loading = ref(true);
 const users = ref([]);
@@ -207,6 +233,7 @@ async function deleteUser() {
 
 onMounted(async () => {
   if (authStore.isAdmin) {
+    llm.fetchStatus();
     await fetchUsers();
   } else {
     loading.value = false;
@@ -246,6 +273,40 @@ button.small {
   justify-content: space-between;
   align-items: center;
   margin-bottom: var(--space-md);
+}
+
+.ai-status-card {
+  padding: var(--space-md);
+  border: 1px solid var(--pico-muted-border-color, #444);
+  border-radius: var(--radius-sm, 4px);
+}
+
+.ai-status-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  margin: 0;
+}
+
+.ai-status-ok {
+  color: var(--color-status-done, #198754);
+}
+
+.ai-status-off {
+  color: var(--color-status-blocked, #dc3545);
+}
+
+.ai-status-loading {
+  animation: ai-status-spin 1s linear infinite;
+}
+
+@keyframes ai-status-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Mobile: scrollable table, stacked header */

@@ -115,6 +115,13 @@
             >
               <i class="bi bi-eye" /> Preview
             </button>
+            <button
+              :class="{ active: tab === 'notes' }"
+              title="AI notes for this section"
+              @click="tab = 'notes'"
+            >
+              <i class="bi bi-stars" /> AI Notes
+            </button>
           </div>
           <div class="format-toolbar">
             <button title="Bold (Ctrl/Cmd+B)" @click.prevent="applyFormat('bold')"><i class="bi bi-type-bold" /></button>
@@ -133,6 +140,31 @@
             >
               <i class="bi bi-search" />
             </button>
+            <button
+              v-if="!llmAvailable"
+              class="ai-actions-btn"
+              disabled
+              :title="aiUnavailableTitle"
+            >
+              <i class="bi bi-stars" />
+            </button>
+            <details v-else ref="aiMenu" class="ai-actions-dropdown">
+              <summary class="ai-actions-btn" title="AI actions">
+                <i class="bi bi-stars" />
+              </summary>
+              <ul class="ai-actions-menu">
+                <li v-for="action in aiActions" :key="action.id">
+                  <button
+                    type="button"
+                    :disabled="aiRunning"
+                    :title="action.title"
+                    @click.prevent="runAiAction(action.id)"
+                  >
+                    <i :class="action.icon" /> {{ action.label }}
+                  </button>
+                </li>
+              </ul>
+            </details>
           </div>
         </div>
 
@@ -190,8 +222,91 @@
             @keyup="onCaretMoved"
           />
         </div>
-        <div v-else class="preview-content" v-html="renderedContent" />
+        <div v-else-if="tab === 'preview'" class="preview-content" v-html="renderedContent" />
+
+        <!-- AI Notes tab -->
+        <div v-else class="ai-notes-content">
+          <div class="ai-notes-header">
+            <span class="ai-notes-hint">
+              Working notes for this section (recap, continuity, suggestions).
+              They are not part of the book content.
+            </span>
+            <button
+              class="generate-notes-btn"
+              :aria-busy="generatingNotes"
+              :disabled="generatingNotes || !llmAvailable"
+              :title="llmAvailable ? 'Generate AI analysis notes for this section' : aiUnavailableTitle"
+              @click="startGenerateNotes"
+            >
+              <i class="bi bi-stars" :class="{ spin: generatingNotes }" />
+              {{ analysis ? "Regenerate Analysis" : "Generate Analysis" }}
+            </button>
+          </div>
+          <p v-if="!llmAvailable" class="ai-unavailable-note">
+            {{ aiUnavailableTitle }}
+          </p>
+          <textarea
+            v-model="analysis"
+            class="analysis-textarea"
+            placeholder="AI notes for this section — what happens, continuity points, ideas..."
+          />
+        </div>
       </div>
+
+      <!-- Overwrite AI Notes confirmation -->
+      <dialog :open="showOverwriteConfirm">
+        <article>
+          <header>
+            <h3>Overwrite AI Notes?</h3>
+            <button
+              class="close-btn"
+              aria-label="Close"
+              @click="showOverwriteConfirm = false"
+            >
+              <i class="bi bi-x-lg" />
+            </button>
+          </header>
+          <p>This section already has AI notes. Generating new notes will replace them.</p>
+          <footer class="dialog-footer">
+            <button class="secondary" @click="showOverwriteConfirm = false">
+              Cancel
+            </button>
+            <button @click="generateNotes">Regenerate</button>
+          </footer>
+        </article>
+      </dialog>
+
+      <!-- AI action result -->
+      <dialog :open="aiDialogOpen">
+        <article>
+          <header>
+            <h3><i class="bi bi-stars" /> AI {{ aiResultActionLabel }}</h3>
+            <button
+              class="close-btn"
+              aria-label="Close"
+              @click="discardAiResult"
+            >
+              <i class="bi bi-x-lg" />
+            </button>
+          </header>
+          <div v-if="aiRunning" class="ai-result-loading">
+            <div class="loading-indicator" />
+            <p>Working on it…</p>
+          </div>
+          <p v-else-if="aiError" class="ai-result-error">{{ aiError }}</p>
+          <pre v-else class="ai-result-text">{{ aiResult }}</pre>
+          <footer v-if="!aiRunning && !aiError" class="dialog-footer">
+            <button class="secondary" @click="discardAiResult">Discard</button>
+            <button class="secondary" @click="saveAiResultToNotes">
+              Save to AI Notes
+            </button>
+            <button @click="insertAiResult">Insert at Cursor</button>
+          </footer>
+          <footer v-else class="dialog-footer">
+            <button class="secondary" @click="discardAiResult">Close</button>
+          </footer>
+        </article>
+      </dialog>
     </template>
     <div v-else class="empty-state">
       <i class="bi bi-file-text" />
@@ -204,18 +319,26 @@
 import { marked } from "marked";
 import { watchDebounced } from "@vueuse/core";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useLlmStore } from "../stores/llm";
 import { useMediaStore } from "../stores/media";
 import { usePropertiesStore } from "../stores/properties";
 import { useSaveStatusStore } from "../stores/saveStatus";
 import { useSectionsStore } from "../stores/sections";
+import { useToastsStore } from "../stores/toasts";
 import {
   clearDraft,
   hasNewerDraft,
   readDraft,
   writeDraft,
 } from "../utils/drafts";
+import { AI_ACTIONS } from "../utils/aiActions";
 import { countWords } from "../utils/wordCount";
-import { insertLink, insertPrefix, wrapSelection } from "../utils/markdownEdit";
+import {
+  insertLink,
+  insertPrefix,
+  insertTextAtCursor,
+  wrapSelection,
+} from "../utils/markdownEdit";
 
 const props = defineProps({
   section: { type: Object, default: null },
@@ -231,13 +354,22 @@ const mediaStore = useMediaStore();
 const propertiesStore = usePropertiesStore();
 const saveStatus = useSaveStatusStore();
 const sectionsStore = useSectionsStore();
+const llmStore = useLlmStore();
+const toastsStore = useToastsStore();
 
 const contentRef = ref(null);
+const aiMenu = ref(null);
 const tab = ref("edit");
 
 const content = ref("");
+const analysis = ref("");
 const selectedMediaId = ref(null);
 const caption = ref("");
+
+const llmAvailable = computed(() => llmStore.available);
+const aiUnavailableTitle =
+  "AI assistance is not configured on this server (LLM_API_KEY missing) — ask your administrator.";
+const aiActions = AI_ACTIONS;
 
 const title = ref("");
 const typeIcon = computed(() => {
@@ -531,6 +663,7 @@ watch(
     if (props.section) {
       title.value = props.section.title || "";
       content.value = props.section.content || "";
+      analysis.value = props.section.analysis || "";
       selectedMediaId.value = props.section.mediaId || null;
       caption.value = props.section.caption || "";
       if (
@@ -544,6 +677,8 @@ watch(
         if (draft) {
           if (typeof draft.title === "string") title.value = draft.title;
           if (typeof draft.content === "string") content.value = draft.content;
+          if (typeof draft.analysis === "string")
+            analysis.value = draft.analysis;
           if (typeof draft.caption === "string") caption.value = draft.caption;
           if (draft.mediaId !== undefined)
             selectedMediaId.value = draft.mediaId;
@@ -565,6 +700,8 @@ function diffFromServer() {
     data.title = title.value;
   if (content.value !== (props.section.content || ""))
     data.content = content.value;
+  if (analysis.value !== (props.section.analysis || ""))
+    data.analysis = analysis.value;
   if (caption.value !== (props.section.caption || ""))
     data.caption = caption.value;
   if ((selectedMediaId.value || null) !== (props.section.mediaId || null))
@@ -576,6 +713,7 @@ function currentDraft() {
   return {
     title: title.value,
     content: content.value,
+    analysis: analysis.value,
     caption: caption.value,
     mediaId: selectedMediaId.value || null,
     savedAt: new Date().toISOString(),
@@ -583,7 +721,7 @@ function currentDraft() {
 }
 
 // Mark the work unsaved as soon as the user edits (before the debounced save)
-watch([title, content, caption, selectedMediaId], () => {
+watch([title, content, analysis, caption, selectedMediaId], () => {
   if (!props.section) return;
   if (Object.keys(diffFromServer()).length > 0) {
     saveStatus.markUnsaved();
@@ -607,7 +745,7 @@ watch(
 
 // Autosave ~2s after the last edit
 watchDebounced(
-  [title, content, caption, selectedMediaId],
+  [title, content, analysis, caption, selectedMediaId],
   () => {
     if (!props.section) return;
     const data = diffFromServer();
@@ -622,7 +760,7 @@ watchDebounced(
 
 // Local draft buffer so in-flight text survives a crash, tab close or network loss
 watchDebounced(
-  [title, content, caption, selectedMediaId],
+  [title, content, analysis, caption, selectedMediaId],
   () => {
     if (!props.section) return;
     if (Object.keys(diffFromServer()).length === 0) return;
@@ -700,6 +838,106 @@ function saveMediaId() {
 function saveCaption() {
   if (!props.section || caption.value === (props.section.caption || "")) return;
   emit("update", { caption: caption.value });
+}
+
+// ==================== AI notes & AI actions ====================
+
+const generatingNotes = ref(false);
+const showOverwriteConfirm = ref(false);
+const aiDialogOpen = ref(false);
+const aiRunning = ref(false);
+const aiResult = ref(null);
+const aiResultAction = ref(null);
+const aiError = ref(null);
+
+const aiResultActionLabel = computed(() => {
+  const action = AI_ACTIONS.find((a) => a.id === aiResultAction.value);
+  return action ? action.label : "";
+});
+
+function startGenerateNotes() {
+  if (analysis.value.trim()) {
+    showOverwriteConfirm.value = true;
+    return;
+  }
+  generateNotes();
+}
+
+async function generateNotes() {
+  showOverwriteConfirm.value = false;
+  if (!props.section || generatingNotes.value) return;
+  generatingNotes.value = true;
+  try {
+    const updated = await sectionsStore.analyzeSection(props.section.id);
+    analysis.value = updated.analysis || "";
+  } catch (err) {
+    toastsStore.error(
+      err.response?.data?.error || "AI analysis generation failed.",
+    );
+  } finally {
+    generatingNotes.value = false;
+  }
+}
+
+async function runAiAction(actionId) {
+  if (!props.section || aiRunning.value) return;
+  aiMenu.value?.removeAttribute("open");
+  aiResultAction.value = actionId;
+  aiResult.value = null;
+  aiError.value = null;
+  aiDialogOpen.value = true;
+  aiRunning.value = true;
+  try {
+    // Improve works on the current selection when there is one
+    let selection;
+    if (actionId === "improve") {
+      const el = contentRef.value;
+      if (el && el.selectionStart !== el.selectionEnd) {
+        selection = content.value.slice(el.selectionStart, el.selectionEnd);
+      }
+    }
+    aiResult.value = await sectionsStore.runAiAction(
+      props.section.id,
+      actionId,
+      selection,
+    );
+  } catch (err) {
+    aiError.value =
+      err.response?.data?.error || err.message || "AI action failed.";
+  } finally {
+    aiRunning.value = false;
+  }
+}
+
+function discardAiResult() {
+  aiDialogOpen.value = false;
+  aiResult.value = null;
+  aiError.value = null;
+}
+
+async function insertAiResult() {
+  const text = aiResult.value;
+  if (!text) return;
+  // The content textarea only exists on the Edit tab
+  tab.value = "edit";
+  await nextTick();
+  const el = contentRef.value;
+  const start = el ? el.selectionStart : content.value.length;
+  const end = el ? el.selectionEnd : content.value.length;
+  const result = insertTextAtCursor(content.value, start, end, text);
+  content.value = result.value;
+  discardAiResult();
+  nextTick(() => {
+    el?.focus();
+    el?.setSelectionRange(result.selectionStart, result.selectionEnd);
+    onCaretMoved();
+  });
+}
+
+function saveAiResultToNotes() {
+  analysis.value = aiResult.value || "";
+  discardAiResult();
+  tab.value = "notes";
 }
 </script>
 
@@ -1087,6 +1325,169 @@ function saveCaption() {
   border-color: var(--pico-primary);
   color: var(--pico-primary);
 }
+
+/* AI actions dropdown */
+.ai-actions-dropdown {
+  position: relative;
+}
+
+.ai-actions-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  padding: var(--space-3xs, 2px) var(--space-2xs);
+  font-size: var(--text-md);
+  color: var(--pico-muted-color);
+  line-height: 1;
+  list-style: none;
+}
+
+.ai-actions-btn::marker,
+.ai-actions-btn::-webkit-details-marker {
+  display: none;
+}
+
+.ai-actions-btn:hover:not(:disabled) {
+  border-color: var(--pico-muted-border-color, #444);
+  color: var(--pico-primary);
+}
+
+.ai-actions-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ai-actions-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 30;
+  min-width: 180px;
+  margin: 0;
+  padding: var(--space-3xs, 2px) 0;
+  list-style: none;
+  background: var(--pico-background-color, #1a1a1a);
+  border: 1px solid var(--pico-muted-border-color, #444);
+  border-radius: var(--radius-sm, 4px);
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.3));
+}
+
+.ai-actions-menu button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: var(--space-2xs) var(--space-sm);
+  font-size: var(--text-sm);
+  color: var(--pico-color);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ai-actions-menu button:hover:not(:disabled) {
+  background: var(--pico-primary-background, rgba(16, 149, 193, 0.15));
+  color: var(--pico-primary);
+}
+
+.ai-actions-menu button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* AI Notes tab */
+.ai-notes-content {
+  display: grid;
+  gap: var(--space-xs);
+  grid-template-rows: auto auto 1fr;
+  min-height: 0;
+  flex: 1;
+}
+
+.ai-notes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.ai-notes-hint {
+  font-size: var(--text-xs);
+  color: var(--pico-muted-color);
+}
+
+.generate-notes-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  white-space: nowrap;
+}
+
+.ai-unavailable-note {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--pico-muted-color);
+}
+
+.analysis-textarea {
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-md);
+  line-height: var(--leading-relaxed, 1.6);
+  background: transparent;
+  border: 1px solid var(--pico-muted-border-color, #444);
+  border-radius: var(--radius-sm, 4px);
+  padding: var(--space-sm);
+}
+
+/* AI action result dialog */
+.ai-result-text {
+  max-height: 50vh;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-sm);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed, 1.6);
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--pico-muted-border-color, #444);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--pico-card-background-color, rgba(255, 255, 255, 0.02));
+}
+
+.ai-result-error {
+  color: var(--pico-del-color, #c0392b);
+}
+
+.ai-result-loading {
+  display: grid;
+  place-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-lg) 0;
+  color: var(--pico-muted-color);
+}
+
+.spin {
+  display: inline-block;
+  animation: ai-spin 1s linear infinite;
+}
+
+@keyframes ai-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 
 /* Mobile: stack header, full-width textareas */
 @media (max-width: 768px) {

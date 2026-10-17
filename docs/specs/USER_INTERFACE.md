@@ -60,11 +60,15 @@ The book detail page uses a **responsive split-pane layout** following the feedw
 - [x] **Book-wide search** box at the top of the sections sidebar: case-insensitive full-text search across section titles, content and captions; results replace the tree while searching and clicking a result jumps to that section (URL `?section=` synced); Escape clears the query; `/` focuses the search box.
 - [x] **Focus mode**: hides the global header, book nav and sidebar and centers the editor for distraction-free writing; toggled via the editor button or Ctrl/Cmd+Shift+F, exits with Escape.
 - [x] Sidebar shows the running **word total** for the book and, when a writing goal is set, the target, percentage and progress bar.
+- [x] **AI availability state**: when the server has no LLM configured, AI controls (Generate Analysis, AI Notes generation, AI actions menu) are disabled with a clear explanation instead of failing; the analysis panel shows the same explanation.
+- [x] **AI Notes tab** in the section editor: editable AI notes for the section with a Generate Analysis button (see SECTIONS.md / ANALYSIS.md).
+- [x] **AI actions menu** in the editor toolbar: result dialog with Insert at Cursor / Save to AI Notes / Discard.
 
 ### Admin (`/admin`)
 
 - [x] User management table.
 - [x] On mobile: horizontally scrollable table, stacked section header.
+- [x] **AI Assistance status card**: shows whether the LLM is configured on the server and which model is used, as a connection check for administrators.
 
 ### Settings (`/settings`)
 

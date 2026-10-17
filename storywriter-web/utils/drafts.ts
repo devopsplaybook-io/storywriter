@@ -3,6 +3,7 @@ export type DraftKind = "section" | "attribute";
 export interface DraftData {
   title?: string;
   content?: string;
+  analysis?: string;
   caption?: string;
   mediaId?: string | null;
   savedAt: string;

@@ -352,6 +352,7 @@
 </template>
 
 <script setup>
+import { useLlmStore } from "../../stores/llm";
 import { useMediaStore } from "../../stores/media";
 import { usePropertiesStore } from "../../stores/properties";
 import { useSaveStatusStore } from "../../stores/saveStatus";
@@ -367,6 +368,7 @@ const mediaStore = useMediaStore();
 const propertiesStore = usePropertiesStore();
 const saveStatus = useSaveStatusStore();
 const toastsStore = useToastsStore();
+const llmStore = useLlmStore();
 
 const loading = ref(true);
 const book = ref(null);
@@ -916,6 +918,11 @@ onBeforeUnmount(() => {
 
 onMounted(async () => {
   await loadBook();
+});
+
+onMounted(() => {
+  // AI availability gates the editor AI actions and the analysis panel
+  llmStore.fetchStatus();
 });
 </script>
 

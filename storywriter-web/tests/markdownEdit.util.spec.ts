@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   insertLink,
   insertPrefix,
+  insertTextAtCursor,
   wrapSelection,
 } from "../utils/markdownEdit";
 
@@ -76,5 +77,35 @@ describe("insertPrefix", () => {
     expect(result.value).toBe("- top line");
     expect(result.selectionStart).toBe(2);
     expect(result.selectionEnd).toBe(5);
+  });
+});
+
+describe("insertTextAtCursor", () => {
+  it("inserts text at the caret and places the caret after it", () => {
+    const result = insertTextAtCursor("hello world", 5, 5, " brave");
+    expect(result.value).toBe("hello brave world");
+    expect(result.selectionStart).toBe(11);
+    expect(result.selectionEnd).toBe(11);
+  });
+
+  it("replaces the current selection", () => {
+    const result = insertTextAtCursor("hello cruel world", 6, 11, "big");
+    expect(result.value).toBe("hello big world");
+    expect(result.selectionStart).toBe(9);
+    expect(result.selectionEnd).toBe(9);
+  });
+
+  it("appends at the end when the caret sits after the last character", () => {
+    const result = insertTextAtCursor("the end", 7, 7, " is near.");
+    expect(result.value).toBe("the end is near.");
+    expect(result.selectionStart).toBe(16);
+    expect(result.selectionEnd).toBe(16);
+  });
+
+  it("handles an empty document", () => {
+    const result = insertTextAtCursor("", 0, 0, "first line");
+    expect(result.value).toBe("first line");
+    expect(result.selectionStart).toBe(10);
+    expect(result.selectionEnd).toBe(10);
   });
 });

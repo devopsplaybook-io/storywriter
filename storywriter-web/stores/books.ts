@@ -32,6 +32,7 @@ export interface BookAnalysisResult {
   improvements: string | null;
   suggestions: string | null;
   rawOutput: string | null;
+  stale?: boolean;
 }
 
 export const useBooksStore = defineStore("books", {

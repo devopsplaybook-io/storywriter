@@ -67,6 +67,7 @@ export async function SectionsDataAddRootSection(
     section.type,
     section.title,
     section.content,
+    section.analysis,
     section.mediaId,
     section.caption,
     section.orderIndex,
@@ -84,6 +85,7 @@ export async function SectionsDataAdd(section: Section): Promise<void> {
     section.type,
     section.title,
     section.content,
+    section.analysis,
     section.mediaId,
     section.caption,
     section.orderIndex,
@@ -98,6 +100,7 @@ export async function SectionsDataUpdate(section: Section): Promise<void> {
     section.type,
     section.title,
     section.content,
+    section.analysis,
     section.mediaId,
     section.caption,
     section.dateUpdated,
@@ -195,15 +198,15 @@ const SQL_QUERIES = {
   },
   INSERT_SECTION: {
     postgres:
-      'INSERT INTO sections ("id", "bookId", "parentId", "type", "title", "content", "mediaId", "caption", "orderIndex", "dateCreated", "dateUpdated") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
+      'INSERT INTO sections ("id", "bookId", "parentId", "type", "title", "content", "analysis", "mediaId", "caption", "orderIndex", "dateCreated", "dateUpdated") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)',
     sqlite:
-      "INSERT INTO sections (id, bookId, parentId, type, title, content, mediaId, caption, orderIndex, dateCreated, dateUpdated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO sections (id, bookId, parentId, type, title, content, analysis, mediaId, caption, orderIndex, dateCreated, dateUpdated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   },
   UPDATE_SECTION: {
     postgres:
-      'UPDATE sections SET "type" = $1, "title" = $2, "content" = $3, "mediaId" = $4, "caption" = $5, "dateUpdated" = $6 WHERE "id" = $7',
+      'UPDATE sections SET "type" = $1, "title" = $2, "content" = $3, "analysis" = $4, "mediaId" = $5, "caption" = $6, "dateUpdated" = $7 WHERE "id" = $8',
     sqlite:
-      "UPDATE sections SET type = ?, title = ?, content = ?, mediaId = ?, caption = ?, dateUpdated = ? WHERE id = ?",
+      "UPDATE sections SET type = ?, title = ?, content = ?, analysis = ?, mediaId = ?, caption = ?, dateUpdated = ? WHERE id = ?",
   },
   UPDATE_SECTION_ORDER: {
     postgres: 'UPDATE sections SET "orderIndex" = $1 WHERE "id" = $2',

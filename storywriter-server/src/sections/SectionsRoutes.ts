@@ -3,6 +3,12 @@ import { AuthGetUserSession } from "@devopsplaybook.io/common-utils";
 import { Section, SectionType } from "../model/Section";
 import { BooksDataGetUserAccess } from "../books/BooksData";
 import {
+  SectionAiActionGenerate,
+  SectionAnalysisGenerate,
+  isAiActionId,
+  LlmUnavailableError,
+} from "../analysis/SectionAnalysis";
+import {
   SectionsDataAdd,
   SectionsDataCopy,
   SectionsDataDelete,
@@ -41,6 +47,18 @@ export class SectionsRoutes {
         return false;
       }
       return true;
+    }
+
+    // Shared error mapping for AI endpoints: unconfigured server → 503,
+    // generation failure → 502 with the underlying message.
+    function sendAiError(res: any, error: unknown): void {
+      if (error instanceof LlmUnavailableError) {
+        res.status(503).send({ error: error.message });
+        return;
+      }
+      res
+        .status(502)
+        .send({ error: (error as Error)?.message || "AI request failed" });
     }
 
     // ==================== LIST SECTIONS BY BOOK ====================
@@ -161,10 +179,65 @@ export class SectionsRoutes {
 
       if (req.body.title !== undefined) section.title = req.body.title;
       if (req.body.content !== undefined) section.content = req.body.content;
+      if (req.body.analysis !== undefined) section.analysis = req.body.analysis;
       if (req.body.mediaId !== undefined) section.mediaId = req.body.mediaId;
       if (req.body.caption !== undefined) section.caption = req.body.caption;
       await SectionsDataUpdate(section);
       return res.status(200).send(section.toTransportJson());
+    });
+
+    // ==================== GENERATE SECTION ANALYSIS ====================
+    interface PostSectionAnalysis extends RequestGenericInterface {
+      Params: { id: string };
+    }
+    fastify.post<PostSectionAnalysis>("/:id/analysis", async (req, res) => {
+      const section = await SectionsDataGet(req.params.id);
+      if (!section) {
+        return res.status(404).send({ error: "Section Not Found" });
+      }
+      if (!(await checkBookAccess(req, res, section.bookId, "write"))) return;
+      if (section.type !== "text") {
+        return res
+          .status(400)
+          .send({ error: "AI analysis is only available for text sections" });
+      }
+      try {
+        const updated = await SectionAnalysisGenerate(section);
+        return res.status(200).send(updated.toTransportJson());
+      } catch (error) {
+        return sendAiError(res, error);
+      }
+    });
+
+    // ==================== SECTION AI ACTION ====================
+    interface PostSectionAiAction extends RequestGenericInterface {
+      Params: { id: string };
+      Body: { action: string; selection?: string };
+    }
+    fastify.post<PostSectionAiAction>("/:id/ai-action", async (req, res) => {
+      const section = await SectionsDataGet(req.params.id);
+      if (!section) {
+        return res.status(404).send({ error: "Section Not Found" });
+      }
+      if (!(await checkBookAccess(req, res, section.bookId, "write"))) return;
+      if (section.type !== "text") {
+        return res
+          .status(400)
+          .send({ error: "AI actions are only available for text sections" });
+      }
+      if (!isAiActionId(req.body.action)) {
+        return res.status(400).send({ error: "Unknown AI action" });
+      }
+      try {
+        const text = await SectionAiActionGenerate(
+          section,
+          req.body.action,
+          req.body.selection,
+        );
+        return res.status(200).send({ text });
+      } catch (error) {
+        return sendAiError(res, error);
+      }
     });
 
     // ==================== REORDER SECTION ====================
