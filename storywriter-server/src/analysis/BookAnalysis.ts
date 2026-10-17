@@ -1,4 +1,3 @@
-import axios from "axios";
 import * as fs from "fs-extra";
 import * as path from "path";
 import { Config } from "../Config";
@@ -9,6 +8,7 @@ import {
   PropertiesDataListByBook,
   PropertiesDataGetSectionValues,
 } from "../properties/PropertiesData";
+import { callLLMWithRetry } from "./LlmClient";
 
 const logger = console;
 
@@ -18,14 +18,15 @@ let config: Config;
 
 export async function BookAnalysisInit(configIn: Config): Promise<void> {
   config = configIn;
-  if (configIn.LLM_API_KEY) {
-    logger.info("[BookAnalysis] LLM analysis feature enabled");
-  } else {
-    logger.info(
-      "[BookAnalysis] LLM analysis feature disabled (no API key configured)",
-    );
-  }
 }
+
+// Character budget for the book content sent to the LLM. The chat API budgets
+// in tokens (~4 chars/token); a hard character constant keeps this dependency-
+// free while approximating the same limit.
+export const ANALYSIS_TOTAL_CHAR_BUDGET = 120000;
+// Every non-empty section is guaranteed this much content so thin sections
+// are never crowded out by long ones.
+export const ANALYSIS_SECTION_FLOOR = 1000;
 
 export interface BookAnalysisResult {
   generatedAt: string;
@@ -53,6 +54,28 @@ export async function BookAnalysisGetCached(
     );
     return null;
   }
+}
+
+/**
+ * A cached report is stale when any section was modified after it was
+ * generated, so the reader knows it may no longer reflect the book.
+ */
+export async function BookAnalysisIsStale(
+  bookId: string,
+): Promise<boolean> {
+  const cached = await BookAnalysisGetCached(bookId);
+  if (!cached || !cached.generatedAt) {
+    return false;
+  }
+  const generatedAt = Date.parse(cached.generatedAt);
+  if (Number.isNaN(generatedAt)) {
+    return false;
+  }
+  const sections = await SectionsDataListByBook(bookId);
+  return sections.some((section) => {
+    const updated = Date.parse(section.dateUpdated);
+    return !Number.isNaN(updated) && updated > generatedAt;
+  });
 }
 
 // ── Generate analysis for a book ──────────────────────────────────────────────
@@ -98,51 +121,46 @@ export async function BookAnalysisGenerate(
     sectionPropertyValues,
   );
 
-  let summary: string;
-  let strengths: string;
-  let improvements: string;
-  let suggestions: string;
-  let fullContent: string | null = null;
+  let fullContent: string;
 
   try {
-    const llmResponse = await callLLMWithRetry(prompt);
-    fullContent = llmResponse || "";
-
-    if (!fullContent || fullContent.trim().length < 20) {
-      logger.warn(
-        `[BookAnalysis] LLM returned empty or very short response for book ${bookId}`,
-      );
-      summary =
-        "LLM returned an empty response. Please check API configuration.";
-    } else {
-      const summaryMatch = fullContent.match(
-        /^## Summary\s*\n([\s\S]*?)(?=\n^## |\n?$)/im,
-      );
-      const strengthsMatch = fullContent.match(
-        /^## Strengths\s*\n([\s\S]*?)(?=\n^## |\n?$)/im,
-      );
-      const improvementsMatch = fullContent.match(
-        /^## Areas for Improvement\s*\n([\s\S]*?)(?=\n^## |\n?$)/im,
-      );
-      const suggestionsMatch = fullContent.match(
-        /^## Suggestions\s*\n([\s\S]*)/im,
-      );
-
-      summary = (summaryMatch?.[1] || "").trim();
-      strengths = (strengthsMatch?.[1] || "").trim();
-      improvements = (improvementsMatch?.[1] || "").trim();
-      suggestions = (suggestionsMatch?.[1] || "").trim();
-
-      // Fallback: if no sections matched, put everything in summary
-      if (!summary && !strengths && !improvements && !suggestions) {
-        summary = fullContent.trim();
-      }
-    }
+    fullContent = await callLLMWithRetry(prompt, { systemPrompt: BOOK_ANALYSIS_SYSTEM_PROMPT });
   } catch (error) {
     logger.error(
       `[BookAnalysis] LLM API call failed for book ${bookId}: ${(error as Error).message}`,
     );
-    summary = `LLM analysis generation failed: ${(error as Error).message}`;
+    // Fail loudly: the cache keeps the last good report and the caller
+    // surfaces the error, instead of storing the failure as report content.
+    throw new Error(
+      `LLM analysis generation failed: ${(error as Error).message}`,
+    );
+  }
+
+  if (!fullContent || fullContent.trim().length < 20) {
+    throw new Error("LLM returned an empty response. Please check API configuration.");
+  }
+
+  const summaryMatch = fullContent.match(
+    /^## Summary\s*\n([\s\S]*?)(?=\n^## |\n?$)/im,
+  );
+  const strengthsMatch = fullContent.match(
+    /^## Strengths\s*\n([\s\S]*?)(?=\n^## |\n?$)/im,
+  );
+  const improvementsMatch = fullContent.match(
+    /^## Areas for Improvement\s*\n([\s\S]*?)(?=\n^## |\n?$)/im,
+  );
+  const suggestionsMatch = fullContent.match(
+    /^## Suggestions\s*\n([\s\S]*)/im,
+  );
+
+  let summary = (summaryMatch?.[1] || "").trim();
+  const strengths = (strengthsMatch?.[1] || "").trim();
+  const improvements = (improvementsMatch?.[1] || "").trim();
+  const suggestions = (suggestionsMatch?.[1] || "").trim();
+
+  // Fallback: if no sections matched, put everything in summary
+  if (!summary && !strengths && !improvements && !suggestions) {
+    summary = fullContent.trim();
   }
 
   const result: BookAnalysisResult = {
@@ -166,13 +184,40 @@ export async function BookAnalysisGenerate(
   return result;
 }
 
-// ── Private helpers ───────────────────────────────────────────────────────────
+// ── Prompt building (exported for unit tests) ─────────────────────────────────
 
-function getFilePath(bookId: string): string {
-  return path.join(config.DATA_DIR, `book-analysis-${bookId}.json`);
+export function countWords(text: string): number {
+  if (!text) return 0;
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).length;
 }
 
-function buildPrompt(
+/**
+ * Split the total character budget across sections: every non-empty section
+ * gets a floor first, the remainder is distributed proportionally to content
+ * length. Returns one budget per input length (0 for empty sections).
+ */
+export function allocateContentBudgets(lengths: number[]): number[] {
+  const nonEmpty = lengths.map((len) => Math.max(0, len));
+  const totalLength = nonEmpty.reduce((sum, len) => sum + len, 0);
+  if (totalLength <= ANALYSIS_TOTAL_CHAR_BUDGET) {
+    return nonEmpty;
+  }
+  const base = nonEmpty.map((len) => Math.min(len, ANALYSIS_SECTION_FLOOR));
+  const baseSum = base.reduce((sum, len) => sum + len, 0);
+  const remaining = ANALYSIS_TOTAL_CHAR_BUDGET - baseSum;
+  if (remaining <= 0) {
+    // The floors alone exhaust the budget: scale them down proportionally.
+    const scale = ANALYSIS_TOTAL_CHAR_BUDGET / baseSum;
+    return base.map((len) => Math.floor(len * scale));
+  }
+  return nonEmpty.map((len, i) =>
+    Math.min(len, base[i] + Math.floor((remaining * len) / totalLength)),
+  );
+}
+
+export function buildPrompt(
   book: { name: string; description: string; dateCreated: string },
   sections: {
     id: string;
@@ -191,6 +236,11 @@ function buildPrompt(
   const rootSection = sections.find((s) => s.parentId === null);
   const nonRootSections = sections.filter((s) => s.parentId !== null);
 
+  // Budget the whole content across sections instead of clipping each one
+  const budgets = allocateContentBudgets(sections.map((s) => s.content.length));
+  const budgetById = new Map<string, number>();
+  sections.forEach((s, i) => budgetById.set(s.id, budgets[i]));
+
   // Build a tree representation
   function buildTree(parentId: string | null, depth: number): string {
     const children = sections.filter((s) => s.parentId === parentId);
@@ -199,13 +249,19 @@ function buildPrompt(
       .sort((a, b) => a.orderIndex - b.orderIndex)
       .map((s) => {
         const indent = "  ".repeat(depth);
-        const contentPreview = s.content
-          ? s.content.substring(0, 300) + (s.content.length > 300 ? "..." : "")
-          : "(empty)";
+        const budget = budgetById.get(s.id) || 0;
+        let contentPreview: string;
+        if (!s.content) {
+          contentPreview = "(empty)";
+        } else if (s.content.length > budget) {
+          contentPreview = `${s.content.substring(0, budget)}… (truncated, ${countWords(s.content)} words total)`;
+        } else {
+          contentPreview = s.content;
+        }
         const propValues = sectionPropertyValues[s.id]
           ? `\n${indent}  Properties: ${sectionPropertyValues[s.id].map((p) => `${p.propertyName}=${p.value}`).join(", ")}`
           : "";
-        return `${indent}- **${s.title}**\n${indent}  Content: ${contentPreview}${propValues}\n${buildTree(s.id, depth + 1)}`;
+        return `${indent}- **${s.title}** (${countWords(s.content)} words)\n${indent}  Content: ${contentPreview}${propValues}\n${buildTree(s.id, depth + 1)}`;
       })
       .join("");
   }
@@ -246,79 +302,33 @@ ${propDefs}
 - Total sections: ${sections.length}
 - Sections with content: ${nonRootSections.filter((s) => s.content && s.content.trim().length > 0).length}
 - Empty sections: ${nonRootSections.filter((s) => !s.content || s.content.trim().length === 0).length}
+- Total words: ${sections.reduce((sum, s) => sum + countWords(s.content), 0).toLocaleString("en-US")}
 - Total attributes: ${attributes.length}
 - Property definitions: ${properties.length}`;
 }
 
-// ── LLM API call with retry ───────────────────────────────────────────────────
+// ── Private helpers ───────────────────────────────────────────────────────────
 
-async function callLLMWithRetry(
-  prompt: string,
-  maxRetries = 3,
-): Promise<string> {
-  let lastError: Error | undefined;
-
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      const response = await axios.post(
-        config.LLM_API_URL,
-        {
-          model: config.LLM_MODEL,
-          temperature: 0.4,
-          max_tokens: 4000,
-          messages: [
-            {
-              role: "system",
-              content:
-                "You are an expert writing coach and book editor. " +
-                "Analyze the provided book structure, content, and metadata to give actionable insights.\n\n" +
-                "IMPORTANT: Address the author directly using 'you' and 'your' throughout the report.\n\n" +
-                "Output your answer in exactly four sections using these headings:\n\n" +
-                "## Summary\n" +
-                "A concise overview (2-3 paragraphs) of the book's current state: " +
-                "structure, scope, completeness, and overall impression.\n\n" +
-                "## Strengths\n" +
-                "3-6 bullet points highlighting what works well: " +
-                "strong sections, good organization, consistent voice, compelling content, etc.\n\n" +
-                "## Areas for Improvement\n" +
-                "3-6 bullet points identifying weaknesses: " +
-                "empty or thin sections, structural issues, inconsistencies, gaps in content or narrative.\n\n" +
-                "## Suggestions\n" +
-                "4-8 concrete, prioritized action items the author can take to improve the book. " +
-                "Be specific — reference actual section titles and content. " +
-                "Include advice on pacing, structure, character development, and writing craft where relevant. " +
-                "Do NOT give generic advice like 'write more' — be concrete.",
-            },
-            {
-              role: "user",
-              content: prompt,
-            },
-          ],
-        },
-        {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${config.LLM_API_KEY}`,
-          },
-          timeout: 90000,
-        },
-      );
-      return response.data?.choices?.[0]?.message?.content || "";
-    } catch (error) {
-      lastError = error as Error;
-      const status = (error as { response?: { status?: number } })?.response
-        ?.status;
-      if (status && status < 500 && status !== 429) {
-        throw error;
-      }
-      if (attempt < maxRetries - 1) {
-        const delay = Math.pow(2, attempt) * 1000;
-        logger.warn(
-          `[BookAnalysis] LLM API attempt ${attempt + 1} failed (status=${status}), retrying in ${delay}ms: ${lastError.message}`,
-        );
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    }
-  }
-  throw lastError || new Error("LLM API call failed after retries");
+function getFilePath(bookId: string): string {
+  return path.join(config.DATA_DIR, `book-analysis-${bookId}.json`);
 }
+
+const BOOK_ANALYSIS_SYSTEM_PROMPT =
+  "You are an expert writing coach and book editor. " +
+  "Analyze the provided book structure, content, and metadata to give actionable insights.\n\n" +
+  "IMPORTANT: Address the author directly using 'you' and 'your' throughout the report.\n\n" +
+  "Output your answer in exactly four sections using these headings:\n\n" +
+  "## Summary\n" +
+  "A concise overview (2-3 paragraphs) of the book's current state: " +
+  "structure, scope, completeness, and overall impression.\n\n" +
+  "## Strengths\n" +
+  "3-6 bullet points highlighting what works well: " +
+  "strong sections, good organization, consistent voice, compelling content, etc.\n\n" +
+  "## Areas for Improvement\n" +
+  "3-6 bullet points identifying weaknesses: " +
+  "empty or thin sections, structural issues, inconsistencies, gaps in content or narrative.\n\n" +
+  "## Suggestions\n" +
+  "4-8 concrete, prioritized action items the author can take to improve the book. " +
+  "Be specific — reference actual section titles and content. " +
+  "Include advice on pacing, structure, character development, and writing craft where relevant. " +
+  "Do NOT give generic advice like 'write more' — be concrete.";

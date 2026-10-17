@@ -27,6 +27,8 @@ import { PropertiesRoutes } from "./properties/PropertiesRoutes";
 import { BookAttributesRoutes } from "./attributes/BookAttributesRoutes";
 import { BookAnalysisInit } from "./analysis/BookAnalysis";
 import { BookAnalysisRoutes } from "./analysis/BookAnalysisRoutes";
+import { LlmClientInit } from "./analysis/LlmClient";
+import { LlmRoutes } from "./analysis/LlmRoutes";
 import { MediaRoutes } from "./media/MediaRoutes";
 import { LegacyMetadataMigrate } from "./utils/LegacyMetadata";
 
@@ -71,6 +73,7 @@ Promise.resolve().then(async () => {
   UsersApiTokensDataSetOTel(OTelTracer());
   await AuthInit(span, config, []);
 
+  LlmClientInit(config);
   await BookAnalysisInit(config);
 
   span.end();
@@ -155,6 +158,13 @@ Promise.resolve().then(async () => {
       await new MediaRoutes(config).getRoutes(instance);
     },
     { prefix: "/api/books" },
+  );
+
+  await fastify.register(
+    async (instance) => {
+      await new LlmRoutes().getRoutes(instance);
+    },
+    { prefix: "/api/llm" },
   );
 
   fastify.register(fastifyStatic, {

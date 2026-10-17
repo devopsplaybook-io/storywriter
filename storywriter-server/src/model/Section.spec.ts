@@ -20,6 +20,7 @@ describe("Section", () => {
       expect(section.type).toBe("text");
       expect(section.title).toBe("");
       expect(section.content).toBe("");
+      expect(section.analysis).toBe("");
       expect(section.mediaId).toBeNull();
       expect(section.caption).toBe("");
       expect(section.orderIndex).toBe(0);
@@ -39,6 +40,7 @@ describe("Section", () => {
         type: "container",
         title: "Chapter 1",
         content: "Content...",
+        analysis: "AI notes",
         mediaId: "media-1",
         caption: "A caption",
         orderIndex: 2,
@@ -52,16 +54,18 @@ describe("Section", () => {
       expect(section.type).toBe("container");
       expect(section.title).toBe("Chapter 1");
       expect(section.content).toBe("Content...");
+      expect(section.analysis).toBe("AI notes");
       expect(section.mediaId).toBe("media-1");
       expect(section.caption).toBe("A caption");
       expect(section.orderIndex).toBe(2);
     });
 
-    it("should default parentId and mediaId to null", () => {
+    it("should default parentId, mediaId and analysis", () => {
       const json = { id: "sec-1", bookId: "book-1", title: "Test" };
       const section = Section.fromJson(json);
       expect(section.parentId).toBeNull();
       expect(section.mediaId).toBeNull();
+      expect(section.analysis).toBe("");
     });
   });
 

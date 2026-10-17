@@ -92,6 +92,26 @@ export const useSectionsStore = defineStore("sections", {
       return res.data;
     },
 
+    async analyzeSection(id: string) {
+      const res = await api.post(`/sections/${id}/analysis`);
+      const index = this.sections.findIndex((s) => s.id === id);
+      if (index >= 0) this.sections[index] = res.data;
+      if (this.currentSection?.id === id) this.currentSection = res.data;
+      return res.data;
+    },
+
+    async runAiAction(
+      id: string,
+      action: string,
+      selection?: string,
+    ): Promise<string> {
+      const res = await api.post(`/sections/${id}/ai-action`, {
+        action,
+        selection,
+      });
+      return res.data.text;
+    },
+
     async reorder(id: string, orderIndex: number) {
       await api.put(`/sections/${id}/order`, { orderIndex });
       const index = this.sections.findIndex((s) => s.id === id);

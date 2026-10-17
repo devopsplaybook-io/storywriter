@@ -87,3 +87,20 @@ export function insertPrefix(
     selectionEnd: selEnd + shift,
   };
 }
+
+// Insert text at the caret (replacing the selection, if any) and place the
+// caret after the inserted text — used by the AI action "insert" flow.
+export function insertTextAtCursor(
+  value: string,
+  selStart: number,
+  selEnd: number,
+  text: string,
+): EditResult {
+  const next = value.slice(0, selStart) + text + value.slice(selEnd);
+  const cursor = selStart + text.length;
+  return {
+    value: next,
+    selectionStart: cursor,
+    selectionEnd: cursor,
+  };
+}
