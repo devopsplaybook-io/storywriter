@@ -39,6 +39,7 @@ export async function BooksDataAdd(book: Book): Promise<void> {
     book.name,
     book.description,
     book.dateCreated,
+    book.writingGoal,
   ]);
 }
 
@@ -46,6 +47,7 @@ export async function BooksDataUpdate(book: Book): Promise<void> {
   await DbUtilsExecSQL(SQL_QUERIES.UPDATE_BOOK[DbUtilsGetType()], [
     book.name,
     book.description,
+    book.writingGoal,
     book.id,
   ]);
 }
@@ -185,14 +187,15 @@ const SQL_QUERIES = {
   },
   INSERT_BOOK: {
     postgres:
-      'INSERT INTO books ("id", "name", "description", "dateCreated") VALUES ($1, $2, $3, $4)',
+      'INSERT INTO books ("id", "name", "description", "dateCreated", "writingGoal") VALUES ($1, $2, $3, $4, $5)',
     sqlite:
-      "INSERT INTO books (id, name, description, dateCreated) VALUES (?, ?, ?, ?)",
+      "INSERT INTO books (id, name, description, dateCreated, writingGoal) VALUES (?, ?, ?, ?, ?)",
   },
   UPDATE_BOOK: {
     postgres:
-      'UPDATE books SET "name" = $1, "description" = $2 WHERE "id" = $3',
-    sqlite: "UPDATE books SET name = ?, description = ? WHERE id = ?",
+      'UPDATE books SET "name" = $1, "description" = $2, "writingGoal" = $3 WHERE "id" = $4',
+    sqlite:
+      "UPDATE books SET name = ?, description = ?, writingGoal = ? WHERE id = ?",
   },
   DELETE_BOOK: {
     postgres: 'DELETE FROM books WHERE "id" = $1',

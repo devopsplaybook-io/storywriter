@@ -6,6 +6,7 @@ export interface Book {
   name: string;
   description: string;
   dateCreated: string;
+  writingGoal: number;
 }
 
 export interface BookVersionSummary {

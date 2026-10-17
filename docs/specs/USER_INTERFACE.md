@@ -57,6 +57,9 @@ The book detail page uses a **responsive split-pane layout** following the feedw
 - [x] Split-pane layout as described above.
 - [x] Three sidebar panels switchable via icon buttons: **Sections**, **Attributes**, **Properties**.
 - [x] Section editor with markdown edit/preview tabs.
+- [x] **Book-wide search** box at the top of the sections sidebar: case-insensitive full-text search across section titles, content and captions; results replace the tree while searching and clicking a result jumps to that section (URL `?section=` synced); Escape clears the query; `/` focuses the search box.
+- [x] **Focus mode**: hides the global header, book nav and sidebar and centers the editor for distraction-free writing; toggled via the editor button or Ctrl/Cmd+Shift+F, exits with Escape.
+- [x] Sidebar shows the running **word total** for the book and, when a writing goal is set, the target, percentage and progress bar.
 
 ### Admin (`/admin`)
 
@@ -86,4 +89,4 @@ The book detail page uses a **responsive split-pane layout** following the feedw
 - [x] **Markdown body**: `.markdown-body` class for rendered markdown content.
 - [x] **Design tokens**: CSS custom properties for spacing (`--space-*`), radius (`--radius-*`), typography (`--text-*`), transitions (`--transition-*`), and shadows (`--shadow-*`).
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-16_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-17_

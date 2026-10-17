@@ -3,7 +3,10 @@
     id="book-detail-layout"
     :class="[
       'mode-' + activePanel,
-      { 'sidebar-collapsed': effectiveSidebarCollapsed },
+      {
+        'sidebar-collapsed': effectiveSidebarCollapsed,
+        'focus-mode': focusMode,
+      },
     ]"
     :style="sectionsGridStyle"
   >
@@ -80,7 +83,28 @@
         />
       </div>
       <div v-show="!sidebarCollapsed" class="sidebar-tree">
+        <BookSearch
+          ref="bookSearchRef"
+          v-model="searchQuery"
+          @select="selectSection"
+        />
+        <div class="sidebar-wordcount">
+          <span class="wordcount-total">
+            <i class="bi bi-123" />
+            {{ sectionsStore.bookWordCount.toLocaleString() }} words</span>
+          <template v-if="book && book.writingGoal > 0">
+            <span class="wordcount-goal">
+              of {{ book.writingGoal.toLocaleString() }} ({{ goalPercent }}%)
+            </span>
+            <progress
+              class="goal-progress"
+              :value="sectionsStore.bookWordCount"
+              :max="book.writingGoal"
+            />
+          </template>
+        </div>
         <SectionTree
+          v-if="!searchQuery"
           :root-section="sectionsStore.rootSection"
           :selected-id="selectedSectionId"
           :get-children="sectionsStore.getChildren"
@@ -142,8 +166,10 @@
           :media-list="mediaList"
           :children="currentSectionChildren"
           :get-children="sectionsStore.getChildren"
+          :focus-mode="focusMode"
           @update="updateSection"
           @reorder="handleReorderChildren"
+          @toggle-focus="focusMode = !focusMode"
         />
 
         <!-- Recursive view: read-only nested content -->
@@ -360,6 +386,59 @@ const sidebarCollapsed = ref(
 const isMobile = ref(
   typeof window !== "undefined" ? window.innerWidth <= 768 : false,
 );
+// Ephemeral distraction-free mode (not persisted; Escape or Ctrl/Cmd+Shift+F exits)
+const focusMode = ref(false);
+const searchQuery = ref("");
+const bookSearchRef = ref(null);
+
+const goalPercent = computed(() => {
+  if (!book.value || !book.value.writingGoal) return 0;
+  return Math.min(
+    100,
+    Math.round((sectionsStore.bookWordCount / book.value.writingGoal) * 100),
+  );
+});
+
+// ==================== Focus mode ====================
+
+watch(focusMode, (on) => {
+  document.body.classList.toggle("focus-mode", on);
+});
+
+function onGlobalKeydown(event) {
+  const mod = event.ctrlKey || event.metaKey;
+  if (mod && event.shiftKey && event.key.toLowerCase() === "f") {
+    event.preventDefault();
+    focusMode.value = !focusMode.value;
+    return;
+  }
+  // Escape exits focus mode unless the event was consumed by the find bar
+  // or the book search (they call preventDefault on their own Escapes)
+  if (event.key === "Escape" && focusMode.value && !event.defaultPrevented) {
+    focusMode.value = false;
+    return;
+  }
+  // "/" focuses the book search (ignored while typing in a form field)
+  if (
+    event.key === "/" &&
+    !mod &&
+    !event.defaultPrevented &&
+    activePanel.value === "sections" &&
+    !focusMode.value
+  ) {
+    const target = event.target;
+    const tag = target?.tagName?.toLowerCase();
+    const typing =
+      tag === "input" ||
+      tag === "textarea" ||
+      tag === "select" ||
+      target?.isContentEditable;
+    if (!typing) {
+      event.preventDefault();
+      bookSearchRef.value?.focus();
+    }
+  }
+}
 
 // Resizable sidebar width (desktop only)
 const SIDEBAR_MIN = 180;
@@ -381,6 +460,13 @@ const resizing = ref(false);
 
 const sectionsGridStyle = computed(() => {
   if (activePanel.value !== "sections" || isMobile.value) return {};
+  if (focusMode.value) {
+    return {
+      gridTemplateColumns: "1fr",
+      gridTemplateRows: "1fr",
+      gridTemplateAreas: '"editor"',
+    };
+  }
   return {
     gridTemplateColumns: `${sidebarWidth.value}px 6px 1fr`,
     gridTemplateAreas: '"nav nav nav" "sidebar handle editor"',
@@ -818,8 +904,14 @@ onMounted(() => {
   window.addEventListener("beforeunload", beforeUnloadGuard);
 });
 
+onMounted(() => {
+  window.addEventListener("keydown", onGlobalKeydown);
+});
+
 onBeforeUnmount(() => {
   window.removeEventListener("beforeunload", beforeUnloadGuard);
+  window.removeEventListener("keydown", onGlobalKeydown);
+  document.body.classList.remove("focus-mode");
 });
 
 onMounted(async () => {
@@ -998,6 +1090,30 @@ onMounted(async () => {
 }
 
 /* ============================================
+   Focus mode
+   ============================================ */
+#book-detail-layout.focus-mode #book-nav,
+#book-detail-layout.focus-mode #sidebar-panel,
+#book-detail-layout.focus-mode .sidebar-resize-handle,
+#book-detail-layout.focus-mode .sidebar-toggle {
+  display: none;
+}
+
+@media (min-width: 769px) {
+  #book-detail-layout.focus-mode.mode-sections #editor-panel {
+    max-width: 72ch;
+    width: 100%;
+    margin: 0 auto;
+  }
+}
+
+@media (max-width: 768px) {
+  #book-detail-layout.focus-mode.mode-sections {
+    grid-template-rows: 1fr;
+  }
+}
+
+/* ============================================
    Nav bar
    ============================================ */
 #book-nav {
@@ -1129,5 +1245,57 @@ onMounted(async () => {
 
 .sidebar-toggle i {
   font-size: var(--text-xs);
+}
+
+/* ============================================
+   Sidebar word count + writing goal
+   ============================================ */
+.sidebar-wordcount {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-2xs) var(--space-sm) var(--space-xs);
+  border-bottom: 1px solid var(--pico-muted-border-color, #444);
+  margin-bottom: var(--space-xs);
+  font-size: var(--text-sm);
+  color: var(--pico-muted-color);
+}
+
+.wordcount-total {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.wordcount-goal {
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.goal-progress {
+  width: 100%;
+  height: 6px;
+  margin: 2px 0 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: var(--pico-muted-border-color, #444);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.goal-progress::-webkit-progress-bar {
+  background: var(--pico-muted-border-color, #444);
+  border-radius: 3px;
+}
+
+.goal-progress::-webkit-progress-value {
+  background: var(--pico-primary, #1095c1);
+  border-radius: 3px;
+}
+
+.goal-progress::-moz-progress-bar {
+  background: var(--pico-primary, #1095c1);
+  border-radius: 3px;
 }
 </style>

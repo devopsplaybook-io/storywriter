@@ -70,7 +70,7 @@ export class BooksRoutes {
 
     // ==================== CREATE BOOK ====================
     interface PostBook extends RequestGenericInterface {
-      Body: { name: string; description?: string };
+      Body: { name: string; description?: string; writingGoal?: number };
     }
     fastify.post<PostBook>("/", async (req, res) => {
       const userSession = await AuthGetUserSession(req);
@@ -84,6 +84,7 @@ export class BooksRoutes {
       const book = new Book();
       book.name = req.body.name;
       book.description = req.body.description || "";
+      book.writingGoal = Math.max(0, Math.floor(Number(req.body.writingGoal) || 0));
       await BooksDataAdd(book);
 
       // Create root section for the book
@@ -105,7 +106,7 @@ export class BooksRoutes {
     // ==================== UPDATE BOOK ====================
     interface PutBook extends RequestGenericInterface {
       Params: { id: string };
-      Body: { name?: string; description?: string };
+      Body: { name?: string; description?: string; writingGoal?: number };
     }
     fastify.put<PutBook>("/:id", async (req, res) => {
       const userSession = await AuthGetUserSession(req);
@@ -131,6 +132,11 @@ export class BooksRoutes {
       if (req.body.name !== undefined) book.name = req.body.name;
       if (req.body.description !== undefined)
         book.description = req.body.description;
+      if (req.body.writingGoal !== undefined)
+        book.writingGoal = Math.max(
+          0,
+          Math.floor(Number(req.body.writingGoal) || 0),
+        );
       await BooksDataUpdate(book);
       return res.status(200).send(book.toTransportJson());
     });
