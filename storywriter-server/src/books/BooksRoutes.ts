@@ -1,4 +1,6 @@
 import { FastifyInstance, RequestGenericInterface } from "fastify";
+import * as fs from "fs";
+import * as path from "path";
 import {
   AuthGetUserSession,
   AuthMustBeAdmin,
@@ -16,17 +18,37 @@ import {
   BooksDataSetAccess,
   BooksDataUpdate,
 } from "./BooksData";
-import { SectionsDataAddRootSection } from "../sections/SectionsData";
+import {
+  SectionsDataAddRootSection,
+  SectionsDataListByBook,
+} from "../sections/SectionsData";
 import { BookExportRun, BookImportRun } from "./BookExport";
+import {
+  BookManuscriptCompile,
+  MediaFileLoader,
+  ManuscriptInclude,
+  RenderManuscriptDocx,
+  RenderManuscriptEpub,
+  RenderManuscriptMarkdown,
+} from "./BookManuscript";
 import { Config } from "../Config";
 import { Property } from "../model/Property";
-import { PropertiesDataAdd } from "../properties/PropertiesData";
+import {
+  PropertiesDataAdd,
+  PropertiesDataGetSectionValues,
+  PropertiesDataListByBook,
+} from "../properties/PropertiesData";
+import { MediaDataList } from "../media/MediaData";
 import {
   VersionsDataListByBook,
   VersionsDataGet,
   VersionsDataCreate,
   VersionsDataRestore,
 } from "../versions/VersionsData";
+
+function SafeExportFilename(name: string): string {
+  return name.replace(/[^a-zA-Z0-9-_]/g, "_");
+}
 
 export class BooksRoutes {
   private config: Config;
@@ -323,6 +345,7 @@ export class BooksRoutes {
     // ==================== EXPORT BOOK ====================
     interface ExportBook extends RequestGenericInterface {
       Params: { id: string };
+      Querystring: { format?: string; include?: string };
     }
     fastify.get<ExportBook>("/:id/export", async (req, res) => {
       const userSession = await AuthGetUserSession(req);
@@ -343,17 +366,113 @@ export class BooksRoutes {
           return res.status(403).send({ error: "Access Denied" });
         }
       }
+      const format = (req.query.format || "targz").toLowerCase();
+      if (!["targz", "markdown", "docx", "epub"].includes(format)) {
+        return res.status(400).send({ error: "Unknown export format" });
+      }
+      const include = (req.query.include || "content").toLowerCase();
+      if (!["content", "full"].includes(include)) {
+        return res.status(400).send({ error: "Unknown include option" });
+      }
       try {
-        const archive = await BookExportRun(req.params.id, config);
-        const safeName = book.name.replace(/[^a-zA-Z0-9-_]/g, "_");
-        res.header("Content-Type", "application/gzip");
+        if (format === "targz") {
+          const archive = await BookExportRun(req.params.id, config);
+          const safeName = SafeExportFilename(book.name);
+          res.header("Content-Type", "application/gzip");
+          res.header(
+            "Content-Disposition",
+            `attachment; filename="${safeName}.tar.gz"`,
+          );
+          res.header("X-Filename", `${safeName}.tar.gz`);
+          // Pipe archive stream to response
+          return res.send(archive);
+        }
+
+        // Manuscript formats: compile the book in tree order
+        const sections = await SectionsDataListByBook(book.id);
+        const mediaItems = await MediaDataList(book.id);
+        const mediaById = new Map(mediaItems.map((m) => [m.id, m]));
+        const loadMediaFile: MediaFileLoader = async (mediaBookId, mediaId) => {
+          const media = mediaById.get(mediaId);
+          if (!media) {
+            return null;
+          }
+          try {
+            const buffer = await fs.promises.readFile(
+              path.join(
+                config.DATA_DIR,
+                "media",
+                mediaBookId,
+                mediaId,
+                media.filename,
+              ),
+            );
+            return { buffer, mimeType: media.mimeType };
+          } catch {
+            return null;
+          }
+        };
+        let sectionLabels: Record<string, string[]> = {};
+        if (include === "full") {
+          const properties = await PropertiesDataListByBook(book.id);
+          const typeProperty = properties.find(
+            (p) => p.type === "section-type",
+          );
+          if (typeProperty) {
+            for (const section of sections) {
+              const values = await PropertiesDataGetSectionValues(section.id);
+              const value = values.find(
+                (v) => v.propertyId === typeProperty.id,
+              )?.value;
+              if (value) {
+                const labels = value
+                  .split(",")
+                  .map((t) => t.trim())
+                  .filter(Boolean);
+                if (labels.length > 0) {
+                  sectionLabels[section.id] = labels;
+                }
+              }
+            }
+          }
+        }
+        const compiled = await BookManuscriptCompile(
+          book,
+          sections,
+          mediaItems,
+          loadMediaFile,
+          { include: include as ManuscriptInclude },
+          sectionLabels,
+        );
+        const safeName = SafeExportFilename(book.name);
+
+        if (format === "markdown") {
+          const markdown = RenderManuscriptMarkdown(compiled, book);
+          res.header("Content-Type", "text/markdown; charset=utf-8");
+          res.header(
+            "Content-Disposition",
+            `attachment; filename="${safeName}.md"`,
+          );
+          res.header("X-Filename", `${safeName}.md`);
+          return res.send(markdown);
+        }
+
+        const buffer =
+          format === "docx"
+            ? await RenderManuscriptDocx(compiled, book)
+            : await RenderManuscriptEpub(compiled, book);
+        res.header(
+          "Content-Type",
+          format === "docx"
+            ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            : "application/epub+zip",
+        );
         res.header(
           "Content-Disposition",
-          `attachment; filename="${safeName}.tar.gz"`,
+          `attachment; filename="${safeName}.${format}"`,
         );
-        res.header("X-Filename", `${safeName}.tar.gz`);
-        // Pipe archive stream to response
-        return res.send(archive);
+        res.header("X-Filename", `${safeName}.${format}`);
+        return res.send(buffer);
       } catch (err) {
         return res.status(500).send({
           error: `Export failed: ${err.message || "Unknown error"}`,

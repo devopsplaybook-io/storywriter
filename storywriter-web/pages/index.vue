@@ -40,7 +40,7 @@
         @edit="openEditDialog(book)"
         @delete="confirmDelete(book)"
         @access="openAccessDialog(book)"
-        @export="exportBook(book)"
+        @export="openExportDialog(book)"
       />
     </div>
 
@@ -63,6 +63,15 @@
       :book-id="accessBookId"
       :book-name="accessBookName"
       @close="showAccess = false"
+    />
+
+    <!-- Export Dialog -->
+    <BookExportDialog
+      :open="exportTarget !== null"
+      :book="exportTarget"
+      :exporting="exportingId !== null"
+      @close="exportTarget = null"
+      @export="handleExport"
     />
 
     <!-- Delete Confirmation -->
@@ -107,6 +116,7 @@ const deleteTarget = ref(null);
 const deleting = ref(false);
 const importing = ref(false);
 const exportingId = ref(null);
+const exportTarget = ref(null);
 const importInput = ref(null);
 
 async function fetchBooks() {
@@ -140,6 +150,24 @@ function openAccessDialog(book) {
   showAccess.value = true;
 }
 
+function openExportDialog(book) {
+  exportTarget.value = book;
+}
+
+async function handleExport({ format, include }) {
+  const book = exportTarget.value;
+  if (!book) return;
+  exportTarget.value = null;
+  exportingId.value = book.id;
+  try {
+    await booksStore.exportBook(book.id, format, include);
+  } catch (e) {
+    alert(e.response?.data?.error || "Failed to export book");
+  } finally {
+    exportingId.value = null;
+  }
+}
+
 function confirmDelete(book) {
   deleteTarget.value = book;
 }
@@ -167,17 +195,6 @@ async function deleteBook() {
     alert(e.response?.data?.error || "Failed to delete book");
   } finally {
     deleting.value = false;
-  }
-}
-
-async function exportBook(book) {
-  exportingId.value = book.id;
-  try {
-    await booksStore.exportBook(book.id);
-  } catch (e) {
-    alert(e.response?.data?.error || "Failed to export book");
-  } finally {
-    exportingId.value = null;
   }
 }
 

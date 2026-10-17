@@ -51,6 +51,7 @@ The book detail page uses a **responsive split-pane layout** following the feedw
 - [x] Responsive grid of book cards.
 - [x] On mobile: single column layout, full-width "New Book" button.
 - [x] Each card shows book name, description, date, and action icons (access, edit, delete).
+- [x] **Export dialog**: the card export icon opens a dialog with a format choice (Markdown .md / Word .docx / EPUB .epub / Backup .tar.gz) as a responsive CSS Grid; an "Include AI notes and properties" checkbox is offered for the manuscript formats (disabled for the backup archive).
 
 ### Book Detail (`/books/:id`)
 
