@@ -1,7 +1,7 @@
 import { FastifyInstance, RequestGenericInterface } from "fastify";
-import { AuthGetUserSession } from "@devopsplaybook.io/common-utils";
 import { Section, SectionType } from "../model/Section";
-import { BooksDataGetUserAccess } from "../books/BooksData";
+import { CheckBookAccess } from "../books/BookAccess";
+import { MediaDataGet } from "../media/MediaData";
 import {
   SectionAiActionGenerate,
   SectionAnalysisGenerate,
@@ -9,6 +9,8 @@ import {
   LlmUnavailableError,
 } from "../analysis/SectionAnalysis";
 import {
+  MAX_COPY_DEPTH,
+  MAX_COPY_NODES,
   SectionsDataAdd,
   SectionsDataCopy,
   SectionsDataDelete,
@@ -20,35 +22,10 @@ import {
   SectionsDataUpdate,
   SectionsDataUpdateOrder,
 } from "./SectionsData";
-import { isSelfOrDescendant } from "./SectionsTree";
+import { collectSubtree, isSelfOrDescendant, subtreeDepth } from "./SectionsTree";
 
 export class SectionsRoutes {
   public async getRoutes(fastify: FastifyInstance): Promise<void> {
-    // Helper: check user has at least read access to a book
-    async function checkBookAccess(
-      req: any,
-      res: any,
-      bookId: string,
-      requiredPermission: "read" | "write" = "read",
-    ): Promise<boolean> {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        res.status(403).send({ error: "Access Denied" });
-        return false;
-      }
-      if (userSession.role === "admin") return true;
-      const access = await BooksDataGetUserAccess(bookId, userSession.userId);
-      if (!access) {
-        res.status(403).send({ error: "Access Denied" });
-        return false;
-      }
-      if (requiredPermission === "write" && access !== "write") {
-        res.status(403).send({ error: "Write Access Required" });
-        return false;
-      }
-      return true;
-    }
-
     // Shared error mapping for AI endpoints: unconfigured server → 503,
     // generation failure → 502 with the underlying message.
     function sendAiError(res: any, error: unknown): void {
@@ -70,7 +47,7 @@ export class SectionsRoutes {
       if (!bookId) {
         return res.status(400).send({ error: "Missing: bookId" });
       }
-      if (!(await checkBookAccess(req, res, bookId, "read"))) return;
+      if (!(await CheckBookAccess(req, res, bookId, "read"))) return;
       const sections = await SectionsDataListByBook(bookId);
       return res.status(200).send(sections.map((s) => s.toTransportJson()));
     });
@@ -84,7 +61,7 @@ export class SectionsRoutes {
       if (!bookId) {
         return res.status(400).send({ error: "Missing: bookId" });
       }
-      if (!(await checkBookAccess(req, res, bookId, "read"))) return;
+      if (!(await CheckBookAccess(req, res, bookId, "read"))) return;
       const root = await SectionsDataGetRootSection(bookId);
       if (!root) {
         return res.status(404).send({ error: "Root Section Not Found" });
@@ -101,7 +78,7 @@ export class SectionsRoutes {
       if (!section) {
         return res.status(404).send({ error: "Section Not Found" });
       }
-      if (!(await checkBookAccess(req, res, section.bookId, "read"))) return;
+      if (!(await CheckBookAccess(req, res, section.bookId, "read"))) return;
       return res.status(200).send(section.toTransportJson());
     });
 
@@ -114,8 +91,11 @@ export class SectionsRoutes {
       if (!parent) {
         return res.status(404).send({ error: "Section Not Found" });
       }
-      if (!(await checkBookAccess(req, res, parent.bookId, "read"))) return;
-      const children = await SectionsDataListChildren(req.params.id);
+      if (!(await CheckBookAccess(req, res, parent.bookId, "read"))) return;
+      const children = await SectionsDataListChildren(
+        req.params.id,
+        parent.bookId,
+      );
       return res.status(200).send(children.map((s) => s.toTransportJson()));
     });
 
@@ -133,17 +113,36 @@ export class SectionsRoutes {
       };
     }
     fastify.post<PostSection>("/", async (req, res) => {
-      if (!(await checkBookAccess(req, res, req.body.bookId, "write"))) return;
+      if (!req.body?.bookId) {
+        return res.status(400).send({ error: "Missing: bookId" });
+      }
+      if (!req.body?.parentId) {
+        return res.status(400).send({ error: "Missing: parentId" });
+      }
+      if (!(await CheckBookAccess(req, res, req.body.bookId, "write"))) return;
 
       // Only container sections can have children
       const parent = await SectionsDataGet(req.body.parentId);
       if (!parent) {
         return res.status(404).send({ error: "Parent Section Not Found" });
       }
+      if (parent.bookId !== req.body.bookId) {
+        return res
+          .status(400)
+          .send({ error: "Parent section is in a different book" });
+      }
       if (parent.type !== "container") {
         return res
           .status(400)
           .send({ error: "Only container sections can have sub-sections" });
+      }
+      if (req.body.mediaId) {
+        const media = await MediaDataGet(req.body.mediaId);
+        if (!media || media.bookId !== req.body.bookId) {
+          return res
+            .status(400)
+            .send({ error: "Media is in a different book" });
+        }
       }
 
       const section = new Section();
@@ -175,7 +174,16 @@ export class SectionsRoutes {
       if (!section) {
         return res.status(404).send({ error: "Section Not Found" });
       }
-      if (!(await checkBookAccess(req, res, section.bookId, "write"))) return;
+      if (!(await CheckBookAccess(req, res, section.bookId, "write"))) return;
+
+      if (req.body.mediaId) {
+        const media = await MediaDataGet(req.body.mediaId);
+        if (!media || media.bookId !== section.bookId) {
+          return res
+            .status(400)
+            .send({ error: "Media is in a different book" });
+        }
+      }
 
       if (req.body.title !== undefined) section.title = req.body.title;
       if (req.body.content !== undefined) section.content = req.body.content;
@@ -195,7 +203,7 @@ export class SectionsRoutes {
       if (!section) {
         return res.status(404).send({ error: "Section Not Found" });
       }
-      if (!(await checkBookAccess(req, res, section.bookId, "write"))) return;
+      if (!(await CheckBookAccess(req, res, section.bookId, "write"))) return;
       if (section.type !== "text") {
         return res
           .status(400)
@@ -219,7 +227,7 @@ export class SectionsRoutes {
       if (!section) {
         return res.status(404).send({ error: "Section Not Found" });
       }
-      if (!(await checkBookAccess(req, res, section.bookId, "write"))) return;
+      if (!(await CheckBookAccess(req, res, section.bookId, "write"))) return;
       if (section.type !== "text") {
         return res
           .status(400)
@@ -250,7 +258,7 @@ export class SectionsRoutes {
       if (!section) {
         return res.status(404).send({ error: "Section Not Found" });
       }
-      if (!(await checkBookAccess(req, res, section.bookId, "write"))) return;
+      if (!(await CheckBookAccess(req, res, section.bookId, "write"))) return;
       await SectionsDataUpdateOrder(req.params.id, req.body.orderIndex);
       return res.status(200).send({});
     });
@@ -265,8 +273,11 @@ export class SectionsRoutes {
       if (!section) {
         return res.status(404).send({ error: "Section Not Found" });
       }
-      if (!(await checkBookAccess(req, res, section.bookId, "write"))) return;
+      if (!(await CheckBookAccess(req, res, section.bookId, "write"))) return;
 
+      if (!req.body?.parentId) {
+        return res.status(400).send({ error: "Missing: parentId" });
+      }
       // Only container sections can have children
       const targetParent = await SectionsDataGet(req.body.parentId);
       if (!targetParent) {
@@ -312,8 +323,11 @@ export class SectionsRoutes {
       if (!section) {
         return res.status(404).send({ error: "Section Not Found" });
       }
-      if (!(await checkBookAccess(req, res, section.bookId, "write"))) return;
+      if (!(await CheckBookAccess(req, res, section.bookId, "write"))) return;
 
+      if (!req.body?.targetParentId) {
+        return res.status(400).send({ error: "Missing: targetParentId" });
+      }
       // Only container sections can have children
       const targetParent = await SectionsDataGet(req.body.targetParentId);
       if (!targetParent) {
@@ -326,13 +340,40 @@ export class SectionsRoutes {
           .status(400)
           .send({ error: "Can only copy sections into containers" });
       }
+      if (targetParent.bookId !== section.bookId) {
+        return res
+          .status(400)
+          .send({ error: "Section and target parent are in different books" });
+      }
+      const allSections = await SectionsDataListByBook(section.bookId);
+      if (isSelfOrDescendant(section.id, targetParent.id, allSections)) {
+        return res
+          .status(400)
+          .send({ error: "Cannot copy a section into its own subtree" });
+      }
+      if (
+        collectSubtree(section.id, allSections).length > MAX_COPY_NODES
+      ) {
+        return res.status(400).send({
+          error: `Copy exceeds the maximum of ${MAX_COPY_NODES} sections`,
+        });
+      }
+      if (subtreeDepth(section.id, allSections) > MAX_COPY_DEPTH) {
+        return res.status(400).send({
+          error: `Copy exceeds the maximum depth of ${MAX_COPY_DEPTH}`,
+        });
+      }
 
-      const copy = await SectionsDataCopy(
-        req.params.id,
-        req.body.targetParentId,
-        req.body.orderIndex,
-      );
-      return res.status(201).send(copy.toTransportJson());
+      try {
+        const copy = await SectionsDataCopy(
+          req.params.id,
+          req.body.targetParentId,
+          req.body.orderIndex,
+        );
+        return res.status(201).send(copy.toTransportJson());
+      } catch (err) {
+        return res.status(400).send({ error: err.message });
+      }
     });
 
     // ==================== DELETE SECTION ====================
@@ -344,11 +385,11 @@ export class SectionsRoutes {
       if (!section) {
         return res.status(404).send({ error: "Section Not Found" });
       }
+      if (!(await CheckBookAccess(req, res, section.bookId, "write"))) return;
       if (section.parentId === null) {
         return res.status(400).send({ error: "Cannot delete root section" });
       }
-      if (!(await checkBookAccess(req, res, section.bookId, "write"))) return;
-      await SectionsDataDelete(req.params.id);
+      await SectionsDataDelete(req.params.id, section.bookId);
       return res.status(200).send({});
     });
   }

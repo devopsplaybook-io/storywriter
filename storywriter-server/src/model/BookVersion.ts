@@ -44,14 +44,19 @@ export class BookVersion {
     };
   }
 
-  public toTransportJson(): Record<string, unknown> {
-    return {
+  public toTransportJson(
+    options: { includeSnapshot?: boolean } = {},
+  ): Record<string, unknown> {
+    const json: Record<string, unknown> = {
       id: this.id,
       bookId: this.bookId,
       versionNumber: this.versionNumber,
       note: this.note,
-      snapshot: this.snapshot,
       dateCreated: this.dateCreated,
     };
+    if (options.includeSnapshot) {
+      json.snapshot = this.snapshot;
+    }
+    return json;
   }
 }

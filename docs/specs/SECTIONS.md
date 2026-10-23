@@ -58,6 +58,8 @@ Sections are the structural building blocks of a book. They form a hierarchical 
 - [x] Sections are displayed as a navigable **tree** in the sidebar.
 - [x] The root section cannot be deleted.
 - [x] Deleting a section also deletes all its children (cascade).
+- [x] Creates and copies must stay inside one book: the parent/target must resolve to a section of the same `bookId` (`400` otherwise), and child lookups are filtered by `bookId`.
+- [x] Deleting a section only removes sections of its own book; legacy cross-book children are re-parented under their own book's root instead of being deleted.
 - [x] Section type icons shown in tree: `bi-file-text` (text), `bi-folder` (container), `bi-image` (media).
 
 ## Versioning
@@ -98,9 +100,11 @@ Sections are the structural building blocks of a book. They form a hierarchical 
 - [x] The root section cannot be moved, and a section cannot be moved into its own subtree.
 - [x] A tree node context menu (also via right-click) offers rename, duplicate, move to… and delete.
 - [x] Duplicating a section copies it with its whole subtree, keeping type, media and caption; the copy is inserted right after the original.
+- [x] Copying into the section's own subtree, across books, or copying the root is rejected with `400`.
+- [x] Copy is bounded (`MAX_COPY_NODES = 1000`, `MAX_COPY_DEPTH = 100`) and inserted as one batched multi-row INSERT, so a failed copy leaves no partial tree.
 - [x] Duplicated sections start with **empty AI notes** (regenerable content is not copied).
 - [x] A keyboard-accessible "Move to…" dialog moves a section to any allowed container for touch and screen-reader users.
 
 _API: `PUT /api/sections/:id` accepts `analysis`; `POST /api/sections/:id/analysis` regenerates the AI notes; `POST /api/sections/:id/ai-action` runs an AI action (see ANALYSIS.md)._
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-17_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-23_

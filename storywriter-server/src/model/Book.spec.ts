@@ -19,6 +19,23 @@ describe("Book", () => {
       expect(book.description).toBe("");
       expect(book.dateCreated).toBeDefined();
       expect(book.writingGoal).toBe(0);
+      expect(book.ownerId).toBeNull();
+    });
+  });
+
+  describe("ownerId", () => {
+    it("fromJson reads ownerId and defaults to null", () => {
+      expect(Book.fromJson({ name: "B", ownerId: "user-1" }).ownerId).toBe(
+        "user-1",
+      );
+      expect(Book.fromJson({ name: "B" }).ownerId).toBeNull();
+    });
+
+    it("toJson and toTransportJson round-trip the owner", () => {
+      const book = new Book();
+      book.ownerId = "user-1";
+      expect(book.toJson().ownerId).toBe("user-1");
+      expect(book.toTransportJson().ownerId).toBe("user-1");
     });
   });
 

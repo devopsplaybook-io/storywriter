@@ -53,7 +53,7 @@ LLM-powered book analysis provides AI-generated insights on structure, content q
 | Method   | Endpoint                     | Description                                                       |
 | -------- | ---------------------------- | ----------------------------------------------------------------- |
 | [x] GET  | `/api/llm/status`            | LLM availability `{ available, model }` (auth required)           |
-| [x] GET  | `/api/books/:id/analysis`    | Return cached analysis (or null) with `stale` flag                |
+| [x] GET  | `/api/books/:id/analysis`    | Return cached analysis (or null) with `stale` flag (read access required) |
 | [x] POST | `/api/books/:id/analysis`    | Generate a new analysis (write access required; 502 on failure)   |
 | [x] POST | `/api/sections/:id/analysis` | Generate AI notes for a text section (write access required)      |
 | [x] POST | `/api/sections/:id/ai-action`| Run an AI action (`{ action, selection? }` → `{ text }`)          |
@@ -70,4 +70,4 @@ LLM-powered book analysis provides AI-generated insights on structure, content q
 - [x] Web UI: analysis panel with availability state, regeneration overlay and stale hint in `components/AnalysisViewer.vue`.
 - [x] Web UI: AI Notes tab and AI actions menu in `components/SectionEditor.vue`, markdown rendering via `marked`.
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-17_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-23_

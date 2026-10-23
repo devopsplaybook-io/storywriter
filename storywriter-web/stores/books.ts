@@ -7,6 +7,8 @@ export interface Book {
   description: string;
   dateCreated: string;
   writingGoal: number;
+  ownerId: string | null;
+  permission?: "admin" | "owner" | "write" | "read" | null;
 }
 
 export interface BookVersionSummary {
@@ -154,9 +156,10 @@ export const useBooksStore = defineStore("books", {
     async fetchVersion(
       bookId: string,
       versionId: string,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ): Promise<any> {
-      const res = await api.get(`/books/${bookId}/versions/${versionId}`);
+    ): Promise<{ snapshot: string }> {
+      const res = await api.get(
+        `/books/${bookId}/versions/${versionId}/snapshot`,
+      );
       return res.data;
     },
 

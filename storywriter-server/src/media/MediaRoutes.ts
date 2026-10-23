@@ -1,9 +1,8 @@
 import { FastifyInstance, RequestGenericInterface } from "fastify";
 import { promises as fs } from "fs-extra";
 import * as path from "path";
-import { AuthGetUserSession } from "@devopsplaybook.io/common-utils";
 import { Config } from "../Config";
-import { BooksDataGetUserAccess } from "../books/BooksData";
+import { CheckBookAccess } from "../books/BookAccess";
 import {
   MediaDataList,
   MediaDataGet,
@@ -23,31 +22,6 @@ export class MediaRoutes {
 
   public async getRoutes(fastify: FastifyInstance): Promise<void> {
     const config = this.config;
-
-    // Helper: check user has at least read access to a book
-    async function checkBookAccess(
-      req: any,
-      res: any,
-      bookId: string,
-      requiredPermission: "read" | "write" = "read",
-    ): Promise<boolean> {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        res.status(403).send({ error: "Access Denied" });
-        return false;
-      }
-      if (userSession.role === "admin") return true;
-      const access = await BooksDataGetUserAccess(bookId, userSession.userId);
-      if (!access) {
-        res.status(403).send({ error: "Access Denied" });
-        return false;
-      }
-      if (requiredPermission === "write" && access !== "write") {
-        res.status(403).send({ error: "Write Access Required" });
-        return false;
-      }
-      return true;
-    }
 
     // Helper: get media directory path
     function getMediaDir(bookId: string, mediaId: string): string {
@@ -93,7 +67,7 @@ export class MediaRoutes {
     }
     fastify.get<ListMedia>("/:bookId/media", async (req, res) => {
       const bookId = req.params.bookId;
-      if (!(await checkBookAccess(req, res, bookId, "read"))) return;
+      if (!(await CheckBookAccess(req, res, bookId, "read"))) return;
       const mediaList = await MediaDataList(bookId);
       return res.status(200).send(mediaList);
     });
@@ -104,7 +78,7 @@ export class MediaRoutes {
     }
     fastify.get<GetMedia>("/:bookId/media/:id", async (req, res) => {
       const { bookId, id } = req.params;
-      if (!(await checkBookAccess(req, res, bookId, "read"))) return;
+      if (!(await CheckBookAccess(req, res, bookId, "read"))) return;
       const media = await MediaDataGet(id);
       if (!media || media.bookId !== bookId) {
         return res.status(404).send({ error: "Media Not Found" });
@@ -118,7 +92,7 @@ export class MediaRoutes {
     }
     fastify.get<GetMediaFile>("/:bookId/media/:id/file", async (req, res) => {
       const { bookId, id } = req.params;
-      if (!(await checkBookAccess(req, res, bookId, "read"))) return;
+      if (!(await CheckBookAccess(req, res, bookId, "read"))) return;
       const media = await MediaDataGet(id);
       if (!media || media.bookId !== bookId) {
         return res.status(404).send({ error: "Media Not Found" });
@@ -139,7 +113,7 @@ export class MediaRoutes {
     }
     fastify.post<UploadMedia>("/:bookId/media", async (req, res) => {
       const bookId = req.params.bookId;
-      if (!(await checkBookAccess(req, res, bookId, "write"))) return;
+      if (!(await CheckBookAccess(req, res, bookId, "write"))) return;
 
       const data = await req.file();
       if (!data) {
@@ -196,7 +170,7 @@ export class MediaRoutes {
     }
     fastify.put<UpdateMedia>("/:bookId/media/:id", async (req, res) => {
       const { bookId, id } = req.params;
-      if (!(await checkBookAccess(req, res, bookId, "write"))) return;
+      if (!(await CheckBookAccess(req, res, bookId, "write"))) return;
 
       const media = await MediaDataGet(id);
       if (!media || media.bookId !== bookId) {
@@ -237,7 +211,7 @@ export class MediaRoutes {
     }
     fastify.delete<DeleteMedia>("/:bookId/media/:id", async (req, res) => {
       const { bookId, id } = req.params;
-      if (!(await checkBookAccess(req, res, bookId, "write"))) return;
+      if (!(await CheckBookAccess(req, res, bookId, "write"))) return;
 
       const media = await MediaDataGet(id);
       if (!media || media.bookId !== bookId) {

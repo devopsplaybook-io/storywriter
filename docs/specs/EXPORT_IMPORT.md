@@ -54,7 +54,7 @@ The `version` field allows future export format changes. The importer checks the
 | Section property values                                  | Yes                             |
 | Media metadata (slug, filename, mimeType, size)          | Yes                             |
 | Media files (binary)                                     | Yes                             |
-| Book access control                                      | No (importer gets write access) |
+| Book access control                                      | No (importer becomes owner)     |
 | Book analysis                                            | No (can be regenerated)         |
 
 ## Import Behavior
@@ -63,7 +63,7 @@ The `version` field allows future export format changes. The importer checks the
 - All child records (sections, attributes, properties, media) receive **new UUIDs**.
 - ID mappings are maintained so that parent-child relationships, section-media references, and section-property associations are preserved.
 - Media files are copied to `DATA_DIR/media/<newBookId>/<newMediaId>/<filename>`.
-- The importing user is granted **write access** to the new book.
+- The importing user becomes the book's **owner** (`ownerId`) and is also granted **write access**.
 - The original `dateCreated` of the book is preserved.
 
 ## Manuscript Export Formats
@@ -105,7 +105,7 @@ POST /api/books/import
 - Requires authentication.
 - Accepts a multipart file upload (`file` field).
 - Returns `201 Created` with the new book JSON.
-- The importing user automatically gets write access to the new book.
+- The importing user automatically becomes owner and gets write access to the new book.
 
 ## Implementation
 
@@ -126,4 +126,4 @@ POST /api/books/import
 - `marked` — markdown → HTML for the DOCX/EPUB renderers
 - `@turbodocx/html-to-docx` — HTML → DOCX Buffer for the DOCX renderer
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-17_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-23_

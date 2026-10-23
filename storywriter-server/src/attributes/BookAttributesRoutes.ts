@@ -1,7 +1,6 @@
 import { FastifyInstance, RequestGenericInterface } from "fastify";
-import { AuthGetUserSession } from "@devopsplaybook.io/common-utils";
 import { BookAttribute } from "../model/BookAttribute";
-import { BooksDataGetUserAccess } from "../books/BooksData";
+import { CheckBookAccess } from "../books/BookAccess";
 import {
   BookAttributesDataAdd,
   BookAttributesDataDelete,
@@ -12,31 +11,6 @@ import {
 
 export class BookAttributesRoutes {
   public async getRoutes(fastify: FastifyInstance): Promise<void> {
-    // Helper: check book access
-    async function checkBookAccess(
-      req: any,
-      res: any,
-      bookId: string,
-      requiredPermission: "read" | "write" = "read",
-    ): Promise<boolean> {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        res.status(403).send({ error: "Access Denied" });
-        return false;
-      }
-      if (userSession.role === "admin") return true;
-      const access = await BooksDataGetUserAccess(bookId, userSession.userId);
-      if (!access) {
-        res.status(403).send({ error: "Access Denied" });
-        return false;
-      }
-      if (requiredPermission === "write" && access !== "write") {
-        res.status(403).send({ error: "Write Access Required" });
-        return false;
-      }
-      return true;
-    }
-
     // ==================== LIST BY BOOK ====================
     interface ListByBook extends RequestGenericInterface {
       Querystring: { bookId: string };
@@ -46,7 +20,7 @@ export class BookAttributesRoutes {
       if (!bookId) {
         return res.status(400).send({ error: "Missing: bookId" });
       }
-      if (!(await checkBookAccess(req, res, bookId, "read"))) return;
+      if (!(await CheckBookAccess(req, res, bookId, "read"))) return;
       const attrs = await BookAttributesDataListByBook(bookId);
       return res.status(200).send(attrs.map((a) => a.toTransportJson()));
     });
@@ -60,7 +34,7 @@ export class BookAttributesRoutes {
       if (!attr) {
         return res.status(404).send({ error: "Attribute Not Found" });
       }
-      if (!(await checkBookAccess(req, res, attr.bookId, "read"))) return;
+      if (!(await CheckBookAccess(req, res, attr.bookId, "read"))) return;
       return res.status(200).send(attr.toTransportJson());
     });
 
@@ -69,7 +43,7 @@ export class BookAttributesRoutes {
       Body: { bookId: string; title?: string; content?: string };
     }
     fastify.post<PostAttr>("/", async (req, res) => {
-      if (!(await checkBookAccess(req, res, req.body.bookId, "write"))) return;
+      if (!(await CheckBookAccess(req, res, req.body.bookId, "write"))) return;
       const attr = new BookAttribute();
       attr.bookId = req.body.bookId;
       attr.title = req.body.title || "New Attribute";
@@ -88,7 +62,7 @@ export class BookAttributesRoutes {
       if (!attr) {
         return res.status(404).send({ error: "Attribute Not Found" });
       }
-      if (!(await checkBookAccess(req, res, attr.bookId, "write"))) return;
+      if (!(await CheckBookAccess(req, res, attr.bookId, "write"))) return;
       if (req.body.title !== undefined) attr.title = req.body.title;
       if (req.body.content !== undefined) attr.content = req.body.content;
       await BookAttributesDataUpdate(attr);
@@ -104,7 +78,7 @@ export class BookAttributesRoutes {
       if (!attr) {
         return res.status(404).send({ error: "Attribute Not Found" });
       }
-      if (!(await checkBookAccess(req, res, attr.bookId, "write"))) return;
+      if (!(await CheckBookAccess(req, res, attr.bookId, "write"))) return;
       await BookAttributesDataDelete(req.params.id);
       return res.status(200).send({});
     });

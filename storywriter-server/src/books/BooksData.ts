@@ -28,7 +28,7 @@ export async function BooksDataList(): Promise<Book[]> {
 export async function BooksDataListForUser(userId: string): Promise<Book[]> {
   const rows = await DbUtilsQuerySQL(
     SQL_QUERIES.LIST_BOOKS_FOR_USER[DbUtilsGetType()],
-    [userId],
+    [userId, userId],
   );
   return rows.map((raw) => Book.fromJson(raw));
 }
@@ -40,6 +40,7 @@ export async function BooksDataAdd(book: Book): Promise<void> {
     book.description,
     book.dateCreated,
     book.writingGoal,
+    book.ownerId || null,
   ]);
 }
 
@@ -139,6 +140,20 @@ export async function BooksDataGetUserAccess(
   return rows[0].permission;
 }
 
+export async function BooksDataGetPermissionsForUser(
+  userId: string,
+): Promise<Record<string, "read" | "write">> {
+  const rows = await DbUtilsQuerySQL(
+    SQL_QUERIES.LIST_PERMISSIONS_FOR_USER[DbUtilsGetType()],
+    [userId],
+  );
+  const permissions: Record<string, "read" | "write"> = {};
+  for (const row of rows) {
+    permissions[row.bookId] = row.permission;
+  }
+  return permissions;
+}
+
 export async function BooksDataSetAccess(
   bookId: string,
   userId: string,
@@ -181,15 +196,15 @@ const SQL_QUERIES = {
   },
   LIST_BOOKS_FOR_USER: {
     postgres:
-      'SELECT b.* FROM books b LEFT JOIN book_access ba ON b."id" = ba."bookId" WHERE ba."userId" = $1 OR NOT EXISTS (SELECT 1 FROM book_access WHERE "bookId" = b."id") ORDER BY b."name"',
+      'SELECT b.* FROM books b WHERE b."ownerId" = $1 OR EXISTS (SELECT 1 FROM book_access ba WHERE ba."bookId" = b."id" AND ba."userId" = $2) ORDER BY b."name"',
     sqlite:
-      "SELECT b.* FROM books b LEFT JOIN book_access ba ON b.id = ba.bookId WHERE ba.userId = ? OR NOT EXISTS (SELECT 1 FROM book_access WHERE bookId = b.id) ORDER BY b.name",
+      "SELECT b.* FROM books b WHERE b.ownerId = ? OR EXISTS (SELECT 1 FROM book_access ba WHERE ba.bookId = b.id AND ba.userId = ?) ORDER BY b.name",
   },
   INSERT_BOOK: {
     postgres:
-      'INSERT INTO books ("id", "name", "description", "dateCreated", "writingGoal") VALUES ($1, $2, $3, $4, $5)',
+      'INSERT INTO books ("id", "name", "description", "dateCreated", "writingGoal", "ownerId") VALUES ($1, $2, $3, $4, $5, $6)',
     sqlite:
-      "INSERT INTO books (id, name, description, dateCreated, writingGoal) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO books (id, name, description, dateCreated, writingGoal, ownerId) VALUES (?, ?, ?, ?, ?, ?)",
   },
   UPDATE_BOOK: {
     postgres:
@@ -208,6 +223,10 @@ const SQL_QUERIES = {
   GET_USER_BOOK_ACCESS: {
     postgres: 'SELECT * FROM book_access WHERE "bookId" = $1 AND "userId" = $2',
     sqlite: "SELECT * FROM book_access WHERE bookId = ? AND userId = ?",
+  },
+  LIST_PERMISSIONS_FOR_USER: {
+    postgres: 'SELECT "bookId", "permission" FROM book_access WHERE "userId" = $1',
+    sqlite: "SELECT bookId, permission FROM book_access WHERE userId = ?",
   },
   UPSERT_BOOK_ACCESS: {
     postgres:
