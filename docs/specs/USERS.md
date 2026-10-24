@@ -36,8 +36,9 @@
 
 ## Roles
 
-- [x] **admin** — full access: manage users, create/edit/delete books, manage access.
+- [x] **admin** — full access: manage users, create/edit/delete books, manage access (global bypass).
 - [x] **user** — can create and manage their own books, access shared books.
+- [x] **owner** — a user listed in `books.ownerId`; full access to that book, including managing access and deleting it. Owners are not a separate global role.
 
 ## Admin Page
 
@@ -46,4 +47,4 @@
 - [x] Admin can add new users.
 - [x] Admin can delete users (except themselves).
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-03_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-23_

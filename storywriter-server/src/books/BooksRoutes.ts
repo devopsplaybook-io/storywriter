@@ -1,23 +1,25 @@
 import { FastifyInstance, RequestGenericInterface } from "fastify";
 import * as fs from "fs";
 import * as path from "path";
-import {
-  AuthGetUserSession,
-  AuthMustBeAdmin,
-} from "@devopsplaybook.io/common-utils";
+import { AuthGetUserSession } from "@devopsplaybook.io/common-utils";
 import { Book } from "../model/Book";
 import {
   BooksDataAdd,
   BooksDataDelete,
   BooksDataGet,
   BooksDataGetAccess,
-  BooksDataGetUserAccess,
+  BooksDataGetPermissionsForUser,
   BooksDataList,
   BooksDataListForUser,
   BooksDataRemoveAccess,
   BooksDataSetAccess,
   BooksDataUpdate,
 } from "./BooksData";
+import {
+  BookAccessGet,
+  CheckBookAccess,
+  CheckBookOwnerOrAdmin,
+} from "./BookAccess";
 import {
   SectionsDataAddRootSection,
   SectionsDataListByBook,
@@ -66,12 +68,26 @@ export class BooksRoutes {
         return res.status(403).send({ error: "Access Denied" });
       }
       let books: Book[];
+      let permissions: Record<string, "read" | "write"> = {};
       if (userSession.role === "admin") {
         books = await BooksDataList();
       } else {
         books = await BooksDataListForUser(userSession.userId);
+        permissions = await BooksDataGetPermissionsForUser(userSession.userId);
       }
-      return res.status(200).send(books.map((b) => b.toTransportJson()));
+      return res.status(200).send(
+        books.map((b) => {
+          let permission: string | null;
+          if (userSession.role === "admin") {
+            permission = "admin";
+          } else if (b.ownerId === userSession.userId) {
+            permission = "owner";
+          } else {
+            permission = permissions[b.id] || null;
+          }
+          return { ...b.toTransportJson(), permission };
+        }),
+      );
     });
 
     // ==================== GET BOOK ====================
@@ -87,7 +103,13 @@ export class BooksRoutes {
       if (!book) {
         return res.status(404).send({ error: "Book Not Found" });
       }
-      return res.status(200).send(book.toTransportJson());
+      const permission = await BookAccessGet(req, book, userSession);
+      if (!permission) {
+        return res.status(403).send({ error: "Access Denied" });
+      }
+      return res
+        .status(200)
+        .send({ ...book.toTransportJson(), permission });
     });
 
     // ==================== CREATE BOOK ====================
@@ -107,6 +129,7 @@ export class BooksRoutes {
       book.name = req.body.name;
       book.description = req.body.description || "";
       book.writingGoal = Math.max(0, Math.floor(Number(req.body.writingGoal) || 0));
+      book.ownerId = userSession.userId;
       await BooksDataAdd(book);
 
       // Create root section for the book
@@ -139,17 +162,8 @@ export class BooksRoutes {
       if (!book) {
         return res.status(404).send({ error: "Book Not Found" });
       }
-
-      // Check write access or admin
-      if (userSession.role !== "admin") {
-        const access = await BooksDataGetUserAccess(
-          book.id,
-          userSession.userId,
-        );
-        if (access !== "write") {
-          return res.status(403).send({ error: "Write Access Required" });
-        }
-      }
+      if (!(await CheckBookAccess(req, res, req.params.id, "write", book)))
+        return;
 
       if (req.body.name !== undefined) book.name = req.body.name;
       if (req.body.description !== undefined)
@@ -168,15 +182,11 @@ export class BooksRoutes {
       Params: { id: string };
     }
     fastify.delete<DeleteBook>("/:id", async (req, res) => {
-      try {
-        await AuthMustBeAdmin(req, res);
-      } catch {
-        return;
-      }
       const book = await BooksDataGet(req.params.id);
       if (!book) {
         return res.status(404).send({ error: "Book Not Found" });
       }
+      if (!(await CheckBookOwnerOrAdmin(req, res, req.params.id, book))) return;
       await BooksDataDelete(req.params.id);
       return res.status(200).send({});
     });
@@ -188,10 +198,11 @@ export class BooksRoutes {
       Params: { id: string };
     }
     fastify.get<GetAccess>("/:id/access", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        return res.status(403).send({ error: "Access Denied" });
+      const book = await BooksDataGet(req.params.id);
+      if (!book) {
+        return res.status(404).send({ error: "Book Not Found" });
       }
+      if (!(await CheckBookOwnerOrAdmin(req, res, req.params.id, book))) return;
       const access = await BooksDataGetAccess(req.params.id);
       return res.status(200).send(access);
     });
@@ -202,13 +213,22 @@ export class BooksRoutes {
       Body: { userId: string; permission: "read" | "write" };
     }
     fastify.put<PutAccess>("/:id/access", async (req, res) => {
-      try {
-        await AuthMustBeAdmin(req, res);
-      } catch {
-        return;
+      const book = await BooksDataGet(req.params.id);
+      if (!book) {
+        return res.status(404).send({ error: "Book Not Found" });
       }
+      if (!(await CheckBookOwnerOrAdmin(req, res, req.params.id, book))) return;
       if (!req.body.userId || !req.body.permission) {
         return res.status(400).send({ error: "Missing: userId or permission" });
+      }
+      if (
+        req.body.permission !== "read" &&
+        req.body.permission !== "write"
+      ) {
+        return res.status(400).send({ error: "Invalid: permission" });
+      }
+      if (book.ownerId && req.body.userId === book.ownerId) {
+        return res.status(400).send({ error: "Cannot change owner access" });
       }
       await BooksDataSetAccess(
         req.params.id,
@@ -223,10 +243,13 @@ export class BooksRoutes {
       Params: { id: string; userId: string };
     }
     fastify.delete<DeleteAccess>("/:id/access/:userId", async (req, res) => {
-      try {
-        await AuthMustBeAdmin(req, res);
-      } catch {
-        return;
+      const book = await BooksDataGet(req.params.id);
+      if (!book) {
+        return res.status(404).send({ error: "Book Not Found" });
+      }
+      if (!(await CheckBookOwnerOrAdmin(req, res, req.params.id, book))) return;
+      if (book.ownerId && req.params.userId === book.ownerId) {
+        return res.status(400).send({ error: "Cannot remove owner access" });
       }
       await BooksDataRemoveAccess(req.params.id, req.params.userId);
       return res.status(200).send({});
@@ -240,24 +263,12 @@ export class BooksRoutes {
       Body: { note?: string };
     }
     fastify.post<PostVersion>("/:id/versions", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        return res.status(403).send({ error: "Access Denied" });
-      }
       const book = await BooksDataGet(req.params.id);
       if (!book) {
         return res.status(404).send({ error: "Book Not Found" });
       }
-      // Check write access or admin
-      if (userSession.role !== "admin") {
-        const access = await BooksDataGetUserAccess(
-          book.id,
-          userSession.userId,
-        );
-        if (access !== "write") {
-          return res.status(403).send({ error: "Write Access Required" });
-        }
-      }
+      if (!(await CheckBookAccess(req, res, req.params.id, "write", book)))
+        return;
       const note = req.body?.note || "";
       try {
         const version = await VersionsDataCreate(req.params.id, note, config);
@@ -274,33 +285,54 @@ export class BooksRoutes {
       Params: { id: string };
     }
     fastify.get<ListVersions>("/:id/versions", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        return res.status(403).send({ error: "Access Denied" });
-      }
       const book = await BooksDataGet(req.params.id);
       if (!book) {
         return res.status(404).send({ error: "Book Not Found" });
       }
+      if (!(await CheckBookAccess(req, res, req.params.id, "read", book)))
+        return;
       const versions = await VersionsDataListByBook(req.params.id);
       return res.status(200).send(versions.map((v) => v.toTransportJson()));
     });
 
-    // Get specific version
+    // Get specific version (metadata only, no snapshot)
     interface GetVersion extends RequestGenericInterface {
       Params: { id: string; versionId: string };
     }
     fastify.get<GetVersion>("/:id/versions/:versionId", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        return res.status(403).send({ error: "Access Denied" });
+      const book = await BooksDataGet(req.params.id);
+      if (!book) {
+        return res.status(404).send({ error: "Book Not Found" });
       }
+      if (!(await CheckBookAccess(req, res, req.params.id, "read", book)))
+        return;
       const version = await VersionsDataGet(req.params.versionId);
       if (!version || version.bookId !== req.params.id) {
         return res.status(404).send({ error: "Version Not Found" });
       }
       return res.status(200).send(version.toTransportJson());
     });
+
+    // Get the snapshot of a specific version
+    interface GetVersionSnapshot extends RequestGenericInterface {
+      Params: { id: string; versionId: string };
+    }
+    fastify.get<GetVersionSnapshot>(
+      "/:id/versions/:versionId/snapshot",
+      async (req, res) => {
+        const book = await BooksDataGet(req.params.id);
+        if (!book) {
+          return res.status(404).send({ error: "Book Not Found" });
+        }
+        if (!(await CheckBookAccess(req, res, req.params.id, "read", book)))
+          return;
+        const version = await VersionsDataGet(req.params.versionId);
+        if (!version || version.bookId !== req.params.id) {
+          return res.status(404).send({ error: "Version Not Found" });
+        }
+        return res.status(200).send({ snapshot: version.snapshot });
+      },
+    );
 
     // Restore version
     interface RestoreVersion extends RequestGenericInterface {
@@ -309,24 +341,12 @@ export class BooksRoutes {
     fastify.post<RestoreVersion>(
       "/:id/versions/:versionId/restore",
       async (req, res) => {
-        const userSession = await AuthGetUserSession(req);
-        if (!userSession.isAuthenticated) {
-          return res.status(403).send({ error: "Access Denied" });
-        }
         const book = await BooksDataGet(req.params.id);
         if (!book) {
           return res.status(404).send({ error: "Book Not Found" });
         }
-        // Check write access or admin
-        if (userSession.role !== "admin") {
-          const access = await BooksDataGetUserAccess(
-            book.id,
-            userSession.userId,
-          );
-          if (access !== "write") {
-            return res.status(403).send({ error: "Write Access Required" });
-          }
-        }
+        if (!(await CheckBookAccess(req, res, req.params.id, "write", book)))
+          return;
         const version = await VersionsDataGet(req.params.versionId);
         if (!version || version.bookId !== req.params.id) {
           return res.status(404).send({ error: "Version Not Found" });
@@ -348,24 +368,12 @@ export class BooksRoutes {
       Querystring: { format?: string; include?: string };
     }
     fastify.get<ExportBook>("/:id/export", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        return res.status(403).send({ error: "Access Denied" });
-      }
       const book = await BooksDataGet(req.params.id);
       if (!book) {
         return res.status(404).send({ error: "Book Not Found" });
       }
-      // Check read access or admin
-      if (userSession.role !== "admin") {
-        const access = await BooksDataGetUserAccess(
-          book.id,
-          userSession.userId,
-        );
-        if (!access) {
-          return res.status(403).send({ error: "Access Denied" });
-        }
-      }
+      if (!(await CheckBookAccess(req, res, req.params.id, "read", book)))
+        return;
       const format = (req.query.format || "targz").toLowerCase();
       if (!["targz", "markdown", "docx", "epub"].includes(format)) {
         return res.status(400).send({ error: "Unknown export format" });
@@ -492,7 +500,11 @@ export class BooksRoutes {
           return res.status(400).send({ error: "No file uploaded" });
         }
         const buffer = await data.toBuffer();
-        const book = await BookImportRun(buffer, config);
+        const book = await BookImportRun(
+          buffer,
+          config,
+          userSession.userId,
+        );
 
         // Give importer write access
         await BooksDataSetAccess(book.id, userSession.userId, "write");

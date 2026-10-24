@@ -128,6 +128,7 @@ export async function BookExportRun(
 export async function BookImportRun(
   archiveBuffer: Buffer,
   config: Config,
+  ownerId: string,
 ): Promise<Book> {
   const tmpDir = path.join(config.TMP_DIR, `import-${uuidv4()}`);
 
@@ -184,6 +185,7 @@ export async function BookImportRun(
       0,
       Math.floor(Number(bookData.writingGoal) || 0),
     );
+    newBook.ownerId = ownerId || null;
     await BooksDataAdd(newBook);
 
     // Create ID mappings

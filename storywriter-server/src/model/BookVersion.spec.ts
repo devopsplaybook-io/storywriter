@@ -56,12 +56,45 @@ describe("BookVersion", () => {
   });
 
   describe("toJson / toTransportJson", () => {
-    it("should have same structure in both methods", () => {
+    it("toJson keeps the snapshot", () => {
       const version = new BookVersion();
       version.bookId = "book-1";
       version.versionNumber = 2;
       version.note = "Test version";
-      expect(version.toJson()).toEqual(version.toTransportJson());
+      version.snapshot = '{"sections":[]}';
+      expect(version.toJson()).toEqual({
+        id: version.id,
+        bookId: "book-1",
+        versionNumber: 2,
+        note: "Test version",
+        snapshot: '{"sections":[]}',
+        dateCreated: version.dateCreated,
+      });
+    });
+
+    it("toTransportJson omits the snapshot by default", () => {
+      const version = new BookVersion();
+      version.bookId = "book-1";
+      version.versionNumber = 2;
+      version.note = "Test version";
+      version.snapshot = '{"sections":[]}';
+      const json = version.toTransportJson();
+      expect(json.snapshot).toBeUndefined();
+      expect(json).toEqual({
+        id: version.id,
+        bookId: "book-1",
+        versionNumber: 2,
+        note: "Test version",
+        dateCreated: version.dateCreated,
+      });
+    });
+
+    it("toTransportJson includes the snapshot on request", () => {
+      const version = new BookVersion();
+      version.snapshot = '{"sections":[]}';
+      expect(version.toTransportJson({ includeSnapshot: true }).snapshot).toBe(
+        '{"sections":[]}',
+      );
     });
   });
 });

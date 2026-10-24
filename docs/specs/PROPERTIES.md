@@ -20,6 +20,7 @@ Properties are custom key-value metadata that can be defined at the book level a
 ## Section Values
 
 - [x] Each property can have a value assigned to a specific **section**.
+- [x] A value can only bind a property and a section of the **same book**; cross-book assignments are rejected (`400`) on write and delete.
 - [x] Values are edited inline in the properties sidebar panel.
 - [x] Input controls adapt to the property type:
   - [x] **text** — text input
@@ -31,4 +32,4 @@ Properties are custom key-value metadata that can be defined at the book level a
 
 - [x] When a book is deleted, all its property definitions and section values are also deleted.
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-06-18_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-23_

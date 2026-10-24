@@ -168,21 +168,13 @@ watch(
 );
 
 async function viewVersion(v) {
+  viewingVersion.value = v;
+  parsedSnapshot.value = null;
   try {
-    const fullVersion = await booksStore.fetchVersion(props.bookId, v.id);
-    viewingVersion.value = fullVersion;
-    try {
-      parsedSnapshot.value = JSON.parse(fullVersion.snapshot || "{}");
-    } catch {
-      parsedSnapshot.value = null;
-    }
+    const { snapshot } = await booksStore.fetchVersion(props.bookId, v.id);
+    parsedSnapshot.value = JSON.parse(snapshot || "{}");
   } catch {
-    viewingVersion.value = v;
-    try {
-      parsedSnapshot.value = JSON.parse(v.snapshot || "{}");
-    } catch {
-      parsedSnapshot.value = null;
-    }
+    parsedSnapshot.value = null;
   }
 }
 

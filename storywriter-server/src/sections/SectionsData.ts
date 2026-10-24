@@ -4,6 +4,13 @@ import {
   DbUtilsQuerySQL,
   DbUtilsGetType,
 } from "../utils/DbUtils";
+import { collectSubtree, subtreeDepth } from "./SectionsTree";
+
+export const MAX_COPY_NODES = 1000;
+export const MAX_COPY_DEPTH = 100;
+const DELETE_CHUNK_SIZE = 500;
+const SECTION_COLUMNS =
+  '"id", "bookId", "parentId", "type", "title", "content", "analysis", "mediaId", "caption", "orderIndex", "dateCreated", "dateUpdated"';
 
 // ==================== Section CRUD ====================
 
@@ -30,10 +37,11 @@ export async function SectionsDataListByBook(
 
 export async function SectionsDataListChildren(
   parentId: string,
+  bookId: string,
 ): Promise<Section[]> {
   const rows = await DbUtilsQuerySQL(
     SQL_QUERIES.LIST_CHILDREN[DbUtilsGetType()],
-    [parentId],
+    [parentId, bookId],
   );
   return rows.map((raw) => Section.fromJson(raw));
 }
@@ -131,19 +139,63 @@ export async function SectionsDataMove(
   ]);
 }
 
-export async function SectionsDataDelete(id: string): Promise<void> {
-  // Delete section properties
-  await DbUtilsExecSQL(
-    SQL_QUERIES.DELETE_SECTION_PROPERTIES[DbUtilsGetType()],
-    [id],
-  );
-  // Recursively delete children
-  const children = await SectionsDataListChildren(id);
-  for (const child of children) {
-    await SectionsDataDelete(child.id);
+export async function SectionsDataDelete(
+  id: string,
+  bookId: string,
+): Promise<void> {
+  const all = await SectionsDataListByBook(bookId);
+  const subtree = collectSubtree(id, all);
+  const subtreeIds = subtree.map((section) => section.id);
+  // Rows from other books may still point at this subtree (data created
+  // before cross-book parents were rejected). They must survive the delete,
+  // so move them under their own book's root first.
+  await SectionsDataDetachForeignChildren(subtreeIds, bookId);
+  // Children first so parent rows are never deleted while their children still
+  // reference them (PostgreSQL enforces the self-referencing FK).
+  const orderedIds = [...subtreeIds].reverse();
+  for (let i = 0; i < orderedIds.length; i += DELETE_CHUNK_SIZE) {
+    const chunk = orderedIds.slice(i, i + DELETE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(", ");
+    await DbUtilsExecSQL(
+      `DELETE FROM section_properties WHERE "sectionId" IN (${placeholders})`,
+      chunk,
+    );
   }
-  // Delete the section itself
-  await DbUtilsExecSQL(SQL_QUERIES.DELETE_SECTION[DbUtilsGetType()], [id]);
+  for (let i = 0; i < orderedIds.length; i += DELETE_CHUNK_SIZE) {
+    const chunk = orderedIds.slice(i, i + DELETE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(", ");
+    await DbUtilsExecSQL(
+      `DELETE FROM sections WHERE "id" IN (${placeholders})`,
+      chunk,
+    );
+  }
+}
+
+async function SectionsDataDetachForeignChildren(
+  parentIds: string[],
+  bookId: string,
+): Promise<void> {
+  const rootByBook = new Map<string, string | null>();
+  for (let i = 0; i < parentIds.length; i += DELETE_CHUNK_SIZE) {
+    const chunk = parentIds.slice(i, i + DELETE_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(", ");
+    const rows = await DbUtilsQuerySQL(
+      `SELECT * FROM sections WHERE "parentId" IN (${placeholders}) AND "bookId" <> ?`,
+      [...chunk, bookId],
+    );
+    for (const raw of rows) {
+      const child = Section.fromJson(raw);
+      if (!rootByBook.has(child.bookId)) {
+        const root = await SectionsDataGetRootSection(child.bookId);
+        rootByBook.set(child.bookId, root ? root.id : null);
+      }
+      await SectionsDataMove(
+        child.id,
+        rootByBook.get(child.bookId),
+        child.orderIndex,
+      );
+    }
+  }
 }
 
 // ==================== Copy ====================
@@ -157,23 +209,76 @@ export async function SectionsDataCopy(
   if (!source) {
     return null;
   }
-  const copy = new Section();
-  copy.bookId = source.bookId;
-  copy.parentId = targetParentId;
-  copy.type = source.type;
-  copy.title = `${source.title} (copy)`;
-  copy.content = source.content;
-  copy.mediaId = source.mediaId;
-  copy.caption = source.caption;
-  copy.orderIndex = orderIndex;
-  await SectionsDataAdd(copy);
-
-  // Recursively copy children
-  const children = await SectionsDataListChildren(sourceId);
-  for (let i = 0; i < children.length; i++) {
-    await SectionsDataCopy(children[i].id, copy.id, i);
+  const targetParent = await SectionsDataGet(targetParentId);
+  if (!targetParent) {
+    throw new Error("Target parent section not found");
   }
-  return copy;
+  if (targetParent.bookId !== source.bookId) {
+    throw new Error("Cannot copy a section into another book");
+  }
+  const all = await SectionsDataListByBook(source.bookId);
+  const subtree = collectSubtree(sourceId, all);
+  if (subtree.length > MAX_COPY_NODES) {
+    throw new Error(
+      `Copy exceeds the maximum of ${MAX_COPY_NODES} sections`,
+    );
+  }
+  if (subtreeDepth(sourceId, all) > MAX_COPY_DEPTH) {
+    throw new Error(
+      `Copy exceeds the maximum depth of ${MAX_COPY_DEPTH}`,
+    );
+  }
+
+  // Subtree is parent-first, so a copy's parent copy already exists.
+  const copies = new Map<string, Section>();
+  const rows = subtree.map((original) => {
+    const copy = new Section();
+    copy.bookId = original.bookId;
+    copy.parentId =
+      original.id === sourceId
+        ? targetParentId
+        : copies.get(original.parentId).id;
+    copy.type = original.type;
+    copy.title = `${original.title} (copy)`;
+    copy.content = original.content;
+    copy.mediaId = original.mediaId;
+    copy.caption = original.caption;
+    copy.orderIndex =
+      original.id === sourceId ? orderIndex : original.orderIndex;
+    copies.set(original.id, copy);
+    return copy;
+  });
+
+  await SectionsDataAddMany(rows);
+  return copies.get(sourceId);
+}
+
+async function SectionsDataAddMany(sections: Section[]): Promise<void> {
+  if (sections.length === 0) {
+    return;
+  }
+  const rowPlaceholders = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  const sql = `INSERT INTO sections (${SECTION_COLUMNS}) VALUES ${sections
+    .map(() => rowPlaceholders)
+    .join(", ")}`;
+  const params: unknown[] = [];
+  for (const section of sections) {
+    params.push(
+      section.id,
+      section.bookId,
+      section.parentId,
+      section.type,
+      section.title,
+      section.content,
+      section.analysis,
+      section.mediaId,
+      section.caption,
+      section.orderIndex,
+      section.dateCreated,
+      section.dateUpdated,
+    );
+  }
+  await DbUtilsExecSQL(sql, params);
 }
 
 const SQL_QUERIES = {
@@ -188,8 +293,9 @@ const SQL_QUERIES = {
   },
   LIST_CHILDREN: {
     postgres:
-      'SELECT * FROM sections WHERE "parentId" = $1 ORDER BY "orderIndex"',
-    sqlite: "SELECT * FROM sections WHERE parentId = ? ORDER BY orderIndex",
+      'SELECT * FROM sections WHERE "parentId" = $1 AND "bookId" = $2 ORDER BY "orderIndex"',
+    sqlite:
+      "SELECT * FROM sections WHERE parentId = ? AND bookId = ? ORDER BY orderIndex",
   },
   GET_ROOT_SECTION: {
     postgres:
@@ -217,13 +323,5 @@ const SQL_QUERIES = {
       'UPDATE sections SET "parentId" = $1, "orderIndex" = $2, "dateUpdated" = $3 WHERE "id" = $4',
     sqlite:
       "UPDATE sections SET parentId = ?, orderIndex = ?, dateUpdated = ? WHERE id = ?",
-  },
-  DELETE_SECTION: {
-    postgres: 'DELETE FROM sections WHERE "id" = $1',
-    sqlite: "DELETE FROM sections WHERE id = ?",
-  },
-  DELETE_SECTION_PROPERTIES: {
-    postgres: 'DELETE FROM section_properties WHERE "sectionId" = $1',
-    sqlite: "DELETE FROM section_properties WHERE sectionId = ?",
   },
 };

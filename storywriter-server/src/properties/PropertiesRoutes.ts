@@ -1,7 +1,6 @@
 import { FastifyInstance, RequestGenericInterface } from "fastify";
-import { AuthGetUserSession } from "@devopsplaybook.io/common-utils";
 import { Property } from "../model/Property";
-import { BooksDataGetUserAccess } from "../books/BooksData";
+import { CheckBookAccess } from "../books/BookAccess";
 import { SectionsDataGet } from "../sections/SectionsData";
 import {
   PropertiesDataAdd,
@@ -18,31 +17,6 @@ import {
 
 export class PropertiesRoutes {
   public async getRoutes(fastify: FastifyInstance): Promise<void> {
-    // Helper: check book access
-    async function checkBookAccess(
-      req: any,
-      res: any,
-      bookId: string,
-      requiredPermission: "read" | "write" = "read",
-    ): Promise<boolean> {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        res.status(403).send({ error: "Access Denied" });
-        return false;
-      }
-      if (userSession.role === "admin") return true;
-      const access = await BooksDataGetUserAccess(bookId, userSession.userId);
-      if (!access) {
-        res.status(403).send({ error: "Access Denied" });
-        return false;
-      }
-      if (requiredPermission === "write" && access !== "write") {
-        res.status(403).send({ error: "Write Access Required" });
-        return false;
-      }
-      return true;
-    }
-
     // ==================== LIST PROPERTIES BY BOOK ====================
     interface ListByBook extends RequestGenericInterface {
       Querystring: { bookId: string };
@@ -52,7 +26,7 @@ export class PropertiesRoutes {
       if (!bookId) {
         return res.status(400).send({ error: "Missing: bookId" });
       }
-      if (!(await checkBookAccess(req, res, bookId, "read"))) return;
+      if (!(await CheckBookAccess(req, res, bookId, "read"))) return;
       const properties = await PropertiesDataListByBook(bookId);
       return res.status(200).send(properties.map((p) => p.toTransportJson()));
     });
@@ -62,7 +36,7 @@ export class PropertiesRoutes {
       Body: { bookId: string; name: string; options?: string[] };
     }
     fastify.post<PostProperty>("/", async (req, res) => {
-      if (!(await checkBookAccess(req, res, req.body.bookId, "write"))) return;
+      if (!(await CheckBookAccess(req, res, req.body.bookId, "write"))) return;
       if (!req.body.name) {
         return res.status(400).send({ error: "Missing: name" });
       }
@@ -84,7 +58,7 @@ export class PropertiesRoutes {
       if (!property) {
         return res.status(404).send({ error: "Property Not Found" });
       }
-      if (!(await checkBookAccess(req, res, property.bookId, "write"))) return;
+      if (!(await CheckBookAccess(req, res, property.bookId, "write"))) return;
       const previousOptions = property.options;
       if (req.body.name !== undefined) property.name = req.body.name;
       if (req.body.options !== undefined) property.options = req.body.options;
@@ -108,7 +82,7 @@ export class PropertiesRoutes {
       if (!property) {
         return res.status(404).send({ error: "Property Not Found" });
       }
-      if (!(await checkBookAccess(req, res, property.bookId, "write"))) return;
+      if (!(await CheckBookAccess(req, res, property.bookId, "write"))) return;
       await PropertiesDataDelete(req.params.id);
       return res.status(200).send({});
     });
@@ -124,7 +98,7 @@ export class PropertiesRoutes {
       if (!bookId) {
         return res.status(400).send({ error: "Missing: bookId" });
       }
-      if (!(await checkBookAccess(req, res, bookId, "read"))) return;
+      if (!(await CheckBookAccess(req, res, bookId, "read"))) return;
       const values = await PropertiesDataGetAllSectionValuesForBook(bookId);
       return res.status(200).send(values);
     });
@@ -138,7 +112,7 @@ export class PropertiesRoutes {
       if (!section) {
         return res.status(404).send({ error: "Section Not Found" });
       }
-      if (!(await checkBookAccess(req, res, section.bookId, "read"))) return;
+      if (!(await CheckBookAccess(req, res, section.bookId, "read"))) return;
       const values = await PropertiesDataGetSectionValues(req.params.sectionId);
       return res.status(200).send(values);
     });
@@ -153,7 +127,19 @@ export class PropertiesRoutes {
       if (!section) {
         return res.status(404).send({ error: "Section Not Found" });
       }
-      if (!(await checkBookAccess(req, res, section.bookId, "write"))) return;
+      if (!(await CheckBookAccess(req, res, section.bookId, "write"))) return;
+      if (!req.body?.propertyId) {
+        return res.status(400).send({ error: "Missing: propertyId" });
+      }
+      const property = await PropertiesDataGet(req.body.propertyId);
+      if (!property) {
+        return res.status(404).send({ error: "Property Not Found" });
+      }
+      if (property.bookId !== section.bookId) {
+        return res
+          .status(400)
+          .send({ error: "Property and section are in different books" });
+      }
       await PropertiesDataSetSectionValue(
         req.params.sectionId,
         req.body.propertyId,
@@ -173,7 +159,16 @@ export class PropertiesRoutes {
         if (!section) {
           return res.status(404).send({ error: "Section Not Found" });
         }
-        if (!(await checkBookAccess(req, res, section.bookId, "write"))) return;
+        if (!(await CheckBookAccess(req, res, section.bookId, "write"))) return;
+        const property = await PropertiesDataGet(req.params.propertyId);
+        if (!property) {
+          return res.status(404).send({ error: "Property Not Found" });
+        }
+        if (property.bookId !== section.bookId) {
+          return res
+            .status(400)
+            .send({ error: "Property and section are in different books" });
+        }
         await PropertiesDataRemoveSectionValue(
           req.params.sectionId,
           req.params.propertyId,
