@@ -124,8 +124,11 @@ describe("Book export", () => {
         { headers: { authorization: `Bearer ${user.token}` } },
         (response) => {
           response.resume();
-          // Destroy as soon as any bytes arrive.
+          // Destroy as soon as any bytes arrive. The destroy error surfaces
+          // on the request and/or the response depending on timing; both are
+          // expected and swallowed.
           response.once("data", () => req.destroy(new Error("client gone")));
+          response.once("error", () => undefined);
           response.once("close", () => resolve());
         },
       );
