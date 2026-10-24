@@ -3,6 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import Fastify, { FastifyInstance } from "fastify";
 import fastifyMultipart from "@fastify/multipart";
+import fastifyStatic from "@fastify/static";
 import { StandardTracer } from "@devopsplaybook.io/otel-utils";
 import {
   AuthInit,
@@ -36,6 +37,58 @@ export interface TestUser {
 }
 
 /**
+ * Build a multipart request body for `POST /api/books/:bookId/media` (and the
+ * import endpoint) without adding a dependency: a minimal multipart/form-data
+ * encoder for a single file field.
+ */
+export function MultipartFileBody(
+  field: string,
+  filename: string,
+  content: Buffer | string,
+  contentType = "application/octet-stream",
+): { body: Buffer; contentType: string } {
+  const boundary = `----storywirtertest${Math.random().toString(36).slice(2)}`;
+  const head = Buffer.from(
+    `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="${field}"; filename="${filename}"\r\n` +
+      `Content-Type: ${contentType}\r\n\r\n`,
+  );
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+  const body = Buffer.concat([
+    head,
+    typeof content === "string" ? Buffer.from(content) : content,
+    tail,
+  ]);
+  return { body, contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
+/**
+ * Build a tar.gz archive in memory (the same way the exporter does), for
+ * import tests: `files` maps archive entry names to contents.
+ */
+export async function BuildTarGz(
+  files: { name: string; content: Buffer | string }[],
+): Promise<Buffer> {
+  const { TarArchive } = await import("archiver");
+  const chunks: Buffer[] = [];
+  const archive = new TarArchive({ gzip: true });
+  archive.on("data", (chunk: Buffer) => chunks.push(chunk));
+  const done = new Promise<void>((resolve, reject) => {
+    archive.on("error", reject);
+    archive.on("end", () => resolve());
+  });
+  for (const file of files) {
+    archive.append(
+      typeof file.content === "string" ? Buffer.from(file.content) : file.content,
+      { name: file.name },
+    );
+  }
+  await archive.finalize();
+  await done;
+  return Buffer.concat(chunks);
+}
+
+/**
  * Route-level test harness: a Fastify instance backed by a throwaway SQLite
  * database in a temporary DATA_DIR, with the same routes and prefixes as
  * `App.ts`.
@@ -51,6 +104,8 @@ export class TestServer {
     );
     this.config = new Config();
     this.config.DATA_DIR = this.dataDir;
+    this.config.TMP_DIR = path.join(this.dataDir, "tmp");
+    await fs.ensureDir(this.config.TMP_DIR);
     this.config.DATABASE_TYPE = "sqlite";
     this.config.JWT_KEY = "test-jwt-key";
     this.config.OPENTELEMETRY_COLLECTOR_HTTP_TRACES = "";
@@ -76,6 +131,8 @@ export class TestServer {
     await this.app.register(fastifyMultipart, {
       limits: { fileSize: 10 * 1024 * 1024 },
     });
+    // reply.sendFile support for media routes, without serving a web root
+    await this.app.register(fastifyStatic, { root: this.dataDir, serve: false });
     await this.app.register(new UsersRoutes().getRoutes, {
       prefix: "/api/users",
     });
@@ -196,6 +253,31 @@ export class TestServer {
       url,
       headers,
       payload: payload as any,
+    });
+  }
+
+  /** Upload a media file through the multipart media endpoint. */
+  public async uploadMedia(
+    token: string,
+    bookId: string,
+    filename: string,
+    content: Buffer | string,
+    contentType: string,
+  ) {
+    const { body, contentType: header } = MultipartFileBody(
+      "file",
+      filename,
+      content,
+      contentType,
+    );
+    return this.app.inject({
+      method: "POST",
+      url: `/api/books/${bookId}/media`,
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": header,
+      },
+      payload: body,
     });
   }
 

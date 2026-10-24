@@ -3,6 +3,14 @@ import { promises as fs } from "fs-extra";
 import * as path from "path";
 import { Config } from "../Config";
 import { CheckBookAccess } from "../books/BookAccess";
+import { BookMediaDir } from "../books/BookFiles";
+import { SafeJoin, IsSafePathSegment } from "../utils/SafePath";
+import {
+  IsAllowedMimeType,
+  GenerateMediaFilename,
+  MatchesMagicBytes,
+  SanitizeOriginalFilename,
+} from "./MediaValidation";
 import {
   MediaDataList,
   MediaDataGet,
@@ -13,6 +21,10 @@ import {
   MediaDataCreateNew,
 } from "./MediaData";
 
+// Raster images can be shown inline; SVG can contain scripts so it is always
+// offered as a download. All responses carry nosniff.
+const INLINE_MIME_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+
 export class MediaRoutes {
   private config: Config;
 
@@ -22,19 +34,6 @@ export class MediaRoutes {
 
   public async getRoutes(fastify: FastifyInstance): Promise<void> {
     const config = this.config;
-
-    // Helper: get media directory path
-    function getMediaDir(bookId: string, mediaId: string): string {
-      return path.join(config.DATA_DIR, "media", bookId, mediaId);
-    }
-
-    // Helper: sanitize filename
-    function sanitizeFilename(filename: string): string {
-      return filename
-        .replace(/[^a-zA-Z0-9._-]/g, "_")
-        .replace(/_+/g, "_")
-        .substring(0, 200);
-    }
 
     // Helper: generate slug from filename
     function generateSlug(filename: string): string {
@@ -97,14 +96,27 @@ export class MediaRoutes {
       if (!media || media.bookId !== bookId) {
         return res.status(404).send({ error: "Media Not Found" });
       }
-      const mediaDir = getMediaDir(bookId, id);
-      const filePath = path.join(mediaDir, media.filename);
+      if (!IsAllowedMimeType(media.mimeType)) {
+        return res
+          .status(415)
+          .send({ error: "Unsupported media type" });
+      }
+      if (!IsSafePathSegment(media.filename)) {
+        return res.status(404).send({ error: "File Not Found" });
+      }
+      const mediaDir = BookMediaDir(config, bookId);
+      const filePath = SafeJoin(mediaDir, id, media.filename);
       try {
         await fs.access(filePath);
       } catch {
         return res.status(404).send({ error: "File Not Found" });
       }
-      return res.sendFile(media.filename, mediaDir);
+      res.header("X-Content-Type-Options", "nosniff");
+      res.header(
+        "Content-Disposition",
+        `${INLINE_MIME_TYPES.includes(media.mimeType) ? "inline" : "attachment"}; filename="${(media.originalFilename || media.filename).replace(/"/g, "")}"`,
+      );
+      return res.sendFile(media.filename, path.join(mediaDir, id));
     });
 
     // ==================== UPLOAD MEDIA ====================
@@ -120,39 +132,40 @@ export class MediaRoutes {
         return res.status(400).send({ error: "No file uploaded" });
       }
 
-      // Validate mime type (images only)
-      const allowedMimeTypes = [
-        "image/jpeg",
-        "image/png",
-        "image/gif",
-        "image/webp",
-        "image/svg+xml",
-      ];
-      if (!allowedMimeTypes.includes(data.mimetype)) {
+      // Validate mime type with the shared allow-list (images only)
+      if (!IsAllowedMimeType(data.mimetype)) {
         return res
           .status(400)
           .send({ error: "Invalid file type. Only images are allowed." });
       }
 
-      // Read file buffer
+      // Read file buffer and verify the content matches the declared type
       const buffer = await data.toBuffer();
+      if (!MatchesMagicBytes(buffer, data.mimetype)) {
+        return res.status(400).send({
+          error: "Invalid file content. It does not match the declared type.",
+        });
+      }
       const size = buffer.length;
 
-      // Generate media ID, sanitize filename, generate slug
+      // Generate media ID and slug; the storage filename is server-generated
+      // and the original upload name is kept as display metadata only.
       const media = MediaDataCreateNew(
         bookId,
         "",
-        sanitizeFilename(data.filename),
+        "",
+        SanitizeOriginalFilename(data.filename),
         data.mimetype,
         size,
       );
+      media.filename = GenerateMediaFilename(media.id, data.mimetype);
 
       // Generate and ensure unique slug
       const baseSlug = generateSlug(data.filename);
       media.slug = await ensureUniqueSlug(bookId, baseSlug);
 
-      // Create directory and save file
-      const mediaDir = getMediaDir(bookId, media.id);
+      // Create directory and save file (path derived from server-generated ids)
+      const mediaDir = SafeJoin(BookMediaDir(config, bookId), media.id);
       await fs.mkdir(mediaDir, { recursive: true });
       const filePath = path.join(mediaDir, media.filename);
       await fs.writeFile(filePath, buffer);
@@ -218,12 +231,15 @@ export class MediaRoutes {
         return res.status(404).send({ error: "Media Not Found" });
       }
 
-      // Delete file from disk
-      const mediaDir = getMediaDir(bookId, id);
-      try {
-        await fs.rm(mediaDir, { recursive: true, force: true });
-      } catch {
-        // Directory might not exist, continue
+      // Delete file from disk (server-generated ids only; a hostile id or
+      // filename must never escape the book media dir)
+      if (IsSafePathSegment(id) && IsSafePathSegment(bookId)) {
+        const mediaDir = SafeJoin(BookMediaDir(config, bookId), id);
+        try {
+          await fs.rm(mediaDir, { recursive: true, force: true });
+        } catch {
+          // Directory might not exist, continue
+        }
       }
 
       // Delete metadata from DB

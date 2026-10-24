@@ -4,6 +4,7 @@ import {
   DbUtilsQuerySQL,
   DbUtilsGetType,
 } from "../utils/DbUtils";
+import { DbUtilsTransaction } from "../utils/DbTransaction";
 import { BookAttributesDataDeleteByBook } from "../attributes/BookAttributesData";
 import { MediaDataDeleteByBook } from "../media/MediaData";
 
@@ -54,54 +55,57 @@ export async function BooksDataUpdate(book: Book): Promise<void> {
 }
 
 export async function BooksDataDelete(id: string): Promise<void> {
-  // Delete child records in dependency order to avoid FK constraint failures
-  // 1. section_properties (FK → sections, book_properties) must go first
-  await DbUtilsExecSQL(
-    SQL_QUERIES.DELETE_SECTION_PROPERTIES_FOR_BOOK[DbUtilsGetType()],
-    [id],
-  );
-  // 2. section_versions (FK → sections) — pre-init-0002 migration, may not exist
-  try {
+  // All-or-nothing: child rows and the book disappear together.
+  await DbUtilsTransaction(async () => {
+    // Delete child records in dependency order to avoid FK constraint failures
+    // 1. section_properties (FK → sections, book_properties) must go first
     await DbUtilsExecSQL(
-      SQL_QUERIES.DELETE_SECTION_VERSIONS_FOR_BOOK[DbUtilsGetType()],
+      SQL_QUERIES.DELETE_SECTION_PROPERTIES_FOR_BOOK[DbUtilsGetType()],
       [id],
     );
-  } catch {
-    // table may not exist if init-0002 has been applied
-  }
-  // 3. sections (FK → books, self-referencing parentId)
-  await DbUtilsExecSQL(SQL_QUERIES.DELETE_SECTIONS_FOR_BOOK[DbUtilsGetType()], [
-    id,
-  ]);
-  // 4. book_attribute_versions (FK → book_attributes) — pre-init-0002 migration, may not exist
-  try {
-    await DbUtilsExecSQL(
-      SQL_QUERIES.DELETE_BOOK_ATTRIBUTE_VERSIONS_FOR_BOOK[DbUtilsGetType()],
-      [id],
-    );
-  } catch {
-    // table may not exist if init-0002 has been applied
-  }
-  // 5. book_attributes (FK → books)
-  await BookAttributesDataDeleteByBook(id);
-  // 6. book_properties (FK → books; must be after section_properties)
-  await DbUtilsExecSQL(SQL_QUERIES.DELETE_BOOK_PROPERTIES[DbUtilsGetType()], [
-    id,
-  ]);
-  // 7. media (FK → books)
-  await MediaDataDeleteByBook(id);
-  // 8. book_access (FK → books)
-  await DbUtilsExecSQL(SQL_QUERIES.DELETE_BOOK_ACCESS[DbUtilsGetType()], [id]);
-  // 9. book_versions (FK → books) — pre-init-0002 migration, may not exist
-  try {
-    await DbUtilsExecSQL(SQL_QUERIES.DELETE_BOOK_VERSIONS[DbUtilsGetType()], [
+    // 2. section_versions (FK → sections) — pre-init-0002 migration, may not exist
+    try {
+      await DbUtilsExecSQL(
+        SQL_QUERIES.DELETE_SECTION_VERSIONS_FOR_BOOK[DbUtilsGetType()],
+        [id],
+      );
+    } catch {
+      // table may not exist if init-0002 has been applied
+    }
+    // 3. sections (FK → books, self-referencing parentId)
+    await DbUtilsExecSQL(SQL_QUERIES.DELETE_SECTIONS_FOR_BOOK[DbUtilsGetType()], [
       id,
     ]);
-  } catch {
-    // table may not exist if the init-0002 migration hasn't been applied
-  }
-  // 10. Finally, the book itself
-  await DbUtilsExecSQL(SQL_QUERIES.DELETE_BOOK[DbUtilsGetType()], [id]);
+    // 4. book_attribute_versions (FK → book_attributes) — pre-init-0002 migration, may not exist
+    try {
+      await DbUtilsExecSQL(
+        SQL_QUERIES.DELETE_BOOK_ATTRIBUTE_VERSIONS_FOR_BOOK[DbUtilsGetType()],
+        [id],
+      );
+    } catch {
+      // table may not exist if init-0002 has been applied
+    }
+    // 5. book_attributes (FK → books)
+    await BookAttributesDataDeleteByBook(id);
+    // 6. book_properties (FK → books; must be after section_properties)
+    await DbUtilsExecSQL(SQL_QUERIES.DELETE_BOOK_PROPERTIES[DbUtilsGetType()], [
+      id,
+    ]);
+    // 7. media (FK → books)
+    await MediaDataDeleteByBook(id);
+    // 8. book_access (FK → books)
+    await DbUtilsExecSQL(SQL_QUERIES.DELETE_BOOK_ACCESS[DbUtilsGetType()], [id]);
+    // 9. book_versions (FK → books) — pre-init-0002 migration, may not exist
+    try {
+      await DbUtilsExecSQL(SQL_QUERIES.DELETE_BOOK_VERSIONS[DbUtilsGetType()], [
+        id,
+      ]);
+    } catch {
+      // table may not exist if the init-0002 migration hasn't been applied
+    }
+    // 10. Finally, the book itself
+    await DbUtilsExecSQL(SQL_QUERIES.DELETE_BOOK[DbUtilsGetType()], [id]);
+  });
 }
 
 // ==================== Book Access ====================

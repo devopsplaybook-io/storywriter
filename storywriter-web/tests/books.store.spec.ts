@@ -15,6 +15,7 @@ import api from "../utils/api";
 
 const mockedApi = api as unknown as {
   get: ReturnType<typeof vi.fn>;
+  post: ReturnType<typeof vi.fn>;
 };
 
 function mockDownload() {
@@ -87,5 +88,32 @@ describe("books store — exportBook", () => {
       responseType: "blob",
       params: { format: "targz", include: "content" },
     });
+  });
+});
+
+describe("books store — importBook", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    mockedApi.post.mockReset();
+  });
+
+  it("posts the file as multipart to /books/import and adds the book", async () => {
+    const file = new File(["archive-bytes"], "book.tar.gz", {
+      type: "application/gzip",
+    });
+    const created = { id: "b2", name: "Imported" };
+    mockedApi.post.mockResolvedValueOnce({ data: created });
+
+    const store = useBooksStore();
+    const result = await store.importBook(file);
+
+    expect(mockedApi.post).toHaveBeenCalledTimes(1);
+    const [url, formData, config] = mockedApi.post.mock.calls[0];
+    expect(url).toBe("/books/import");
+    expect(formData).toBeInstanceOf(FormData);
+    expect(formData.get("file")).toBe(file);
+    expect(config.headers["Content-Type"]).toBe("multipart/form-data");
+    expect(result).toEqual(created);
+    expect(store.books).toContainEqual(created);
   });
 });
