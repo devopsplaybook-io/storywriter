@@ -8,6 +8,10 @@ import {
   DbUtilsQuerySQL as _DbUtilsQuerySQL,
   DbUtilsGetType as _DbUtilsGetType,
 } from "@devopsplaybook.io/common-utils";
+import {
+  DbUtilsTransactionStoreGet,
+  DbUtilsTransactionWait,
+} from "./DbTransaction";
 
 // Re-export functions that don't need wrapping
 export const DbUtilsSetOTel = _DbUtilsSetOTel;
@@ -15,6 +19,47 @@ export const DbUtilsInit = _DbUtilsInit;
 export const DbUtilsGetDatabase = _DbUtilsGetDatabase;
 export const convertToPostgresPlaceholders = _convertToPostgresPlaceholders;
 export const DbUtilsGetType = _DbUtilsGetType;
+
+async function RunExecSQL(
+  context: Span | undefined,
+  sql: string,
+  params: unknown[],
+): Promise<number> {
+  const store = DbUtilsTransactionStoreGet();
+  if (store && store.pgClient) {
+    const result = await store.pgClient.query(
+      _convertToPostgresPlaceholders(sql),
+      params,
+    );
+    return result.rowCount ?? 0;
+  }
+  if (!store) {
+    // Outside any transaction: wait for an open SQLite transaction to finish.
+    await DbUtilsTransactionWait();
+  }
+  return Promise.resolve(_DbUtilsExecSQL(context, sql, params));
+}
+
+async function RunQuerySQL(
+  context: Span | undefined,
+  sql: string,
+  params: unknown[],
+  debug?: boolean,
+): Promise<any[]> {
+  const store = DbUtilsTransactionStoreGet();
+  if (store && store.pgClient) {
+    const result = await store.pgClient.query(
+      _convertToPostgresPlaceholders(sql),
+      params,
+    );
+    return result.rows || [];
+  }
+  if (!store) {
+    // Outside any transaction: wait for an open SQLite transaction to finish.
+    await DbUtilsTransactionWait();
+  }
+  return Promise.resolve(_DbUtilsQuerySQL(context, sql, params, debug));
+}
 
 /**
  * Backward-compatible wrapper for DbUtilsExecSQL.
@@ -37,17 +82,13 @@ export function DbUtilsExecSQL(
   // Detect if first argument is a string (old signature) or Span/undefined (new signature)
   if (typeof contextOrSql === "string") {
     // Old signature: DbUtilsExecSQL(sql, params)
-    return Promise.resolve(
-      _DbUtilsExecSQL(undefined, contextOrSql, sqlOrParams as unknown[]),
-    );
+    return RunExecSQL(undefined, contextOrSql, (sqlOrParams as unknown[]) || []);
   }
   // New signature: DbUtilsExecSQL(context, sql, params)
-  return Promise.resolve(
-    _DbUtilsExecSQL(
-      contextOrSql,
-      sqlOrParams as string,
-      params as unknown[],
-    ),
+  return RunExecSQL(
+    contextOrSql,
+    sqlOrParams as string,
+    (params as unknown[]) || [],
   );
 }
 
@@ -75,22 +116,18 @@ export function DbUtilsQuerySQL(
   // Detect if first argument is a string (old signature) or Span/undefined (new signature)
   if (typeof contextOrSql === "string") {
     // Old signature: DbUtilsQuerySQL(sql, params, debug)
-    return Promise.resolve(
-      _DbUtilsQuerySQL(
-        undefined,
-        contextOrSql,
-        sqlOrParams as unknown[],
-        paramsOrDebug as boolean,
-      ),
+    return RunQuerySQL(
+      undefined,
+      contextOrSql,
+      (sqlOrParams as unknown[]) || [],
+      paramsOrDebug as boolean,
     );
   }
   // New signature: DbUtilsQuerySQL(context, sql, params, debug)
-  return Promise.resolve(
-    _DbUtilsQuerySQL(
-      contextOrSql,
-      sqlOrParams as string,
-      paramsOrDebug as unknown[],
-      debug,
-    ),
+  return RunQuerySQL(
+    contextOrSql,
+    sqlOrParams as string,
+    (paramsOrDebug as unknown[]) || [],
+    debug,
   );
 }

@@ -13,7 +13,7 @@ module.exports = {
   },
   // archiver and marked (and their ESM-only dependency chains) must be transformed to CJS for jest
   transformIgnorePatterns: [
-    "/node_modules/(?!archiver/|zip-stream/|compress-commons/|crc32-stream/|is-stream/|minimatch/|brace-expansion/|balanced-match/|marked/|cookie/)",
+    "/node_modules/(?!archiver/|zip-stream/|compress-commons/|crc32-stream/|is-stream/|minimatch/|brace-expansion/|balanced-match/|marked/|cookie/|content-disposition/)",
   ],
   moduleNameMapper: {
     "^uuid$": "<rootDir>/src/__mocks__/uuid.ts",

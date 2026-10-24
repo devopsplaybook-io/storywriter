@@ -10,6 +10,7 @@ export interface Media {
   bookId: string;
   slug: string;
   filename: string;
+  originalFilename: string;
   mimeType: string;
   size: number;
   dateCreated: string;
@@ -54,6 +55,7 @@ export async function MediaDataAdd(media: Media): Promise<void> {
     media.bookId,
     media.slug,
     media.filename,
+    media.originalFilename || "",
     media.mimeType,
     media.size,
     media.dateCreated,
@@ -88,6 +90,7 @@ function MediaDataFromRow(row: Record<string, unknown>): Media {
     bookId: row.bookId as string,
     slug: row.slug as string,
     filename: row.filename as string,
+    originalFilename: (row.originalFilename as string) || "",
     mimeType: row.mimeType as string,
     size: row.size as number,
     dateCreated: row.dateCreated as string,
@@ -98,6 +101,7 @@ export function MediaDataCreateNew(
   bookId: string,
   slug: string,
   filename: string,
+  originalFilename: string,
   mimeType: string,
   size: number,
 ): Media {
@@ -106,6 +110,7 @@ export function MediaDataCreateNew(
     bookId,
     slug,
     filename,
+    originalFilename,
     mimeType,
     size,
     dateCreated: new Date().toISOString(),
@@ -127,9 +132,9 @@ const SQL_QUERIES = {
   },
   INSERT_MEDIA: {
     postgres:
-      'INSERT INTO media ("id", "bookId", "slug", "filename", "mimeType", "size", "dateCreated") VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      'INSERT INTO media ("id", "bookId", "slug", "filename", "originalFilename", "mimeType", "size", "dateCreated") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
     sqlite:
-      "INSERT INTO media (id, bookId, slug, filename, mimeType, size, dateCreated) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO media (id, bookId, slug, filename, originalFilename, mimeType, size, dateCreated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   },
   UPDATE_MEDIA_SLUG: {
     postgres: 'UPDATE media SET "slug" = $1 WHERE "id" = $2',

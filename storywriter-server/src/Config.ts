@@ -17,6 +17,9 @@ export class Config extends ConfigBase {
   public APPLICATION_TITLE = "Storywriter";
   public TMP_DIR = process.env.TMP_DIR || "/tmp";
 
+  // Versioning: keep at most this many versions per book (oldest pruned)
+  public VERSIONS_MAX_PER_BOOK = 50;
+
   // LLM (reserved for future AI features)
   public LLM_API_KEY = "";
   public LLM_API_URL = "https://api.deepseek.com/chat/completions";
@@ -40,6 +43,7 @@ export class Config extends ConfigBase {
     this.addConfigField({ field: "APPLICATION_TITLE" });
     this.addConfigField({ field: "API_PORT" });
     this.addConfigField({ field: "TMP_DIR" });
+    this.addConfigField({ field: "VERSIONS_MAX_PER_BOOK" });
     this.addConfigField({ field: "LLM_API_KEY", sensitive: true });
     this.addConfigField({ field: "LLM_API_URL" });
     this.addConfigField({ field: "LLM_MODEL" });

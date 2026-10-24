@@ -1,6 +1,5 @@
 import { FastifyInstance, RequestGenericInterface } from "fastify";
 import * as fs from "fs";
-import * as path from "path";
 import { AuthGetUserSession } from "@devopsplaybook.io/common-utils";
 import { Book } from "../model/Book";
 import {
@@ -25,6 +24,7 @@ import {
   SectionsDataListByBook,
 } from "../sections/SectionsData";
 import { BookExportRun, BookImportRun } from "./BookExport";
+import { DeleteBookStorage, BookMediaDir } from "./BookFiles";
 import {
   BookManuscriptCompile,
   MediaFileLoader,
@@ -34,6 +34,8 @@ import {
   RenderManuscriptMarkdown,
 } from "./BookManuscript";
 import { Config } from "../Config";
+import { SafeJoin } from "../utils/SafePath";
+import { ImportValidationError } from "./BookArchiveValidation";
 import { Property } from "../model/Property";
 import {
   PropertiesDataAdd,
@@ -188,6 +190,10 @@ export class BooksRoutes {
       }
       if (!(await CheckBookOwnerOrAdmin(req, res, req.params.id, book))) return;
       await BooksDataDelete(req.params.id);
+      // Remove media, version media and the analysis cache after the DB
+      // delete; failures are logged by DeleteBookStorage but don't fail the
+      // request (the database is the source of truth).
+      await DeleteBookStorage(req.params.id, config);
       return res.status(200).send({});
     });
 
@@ -384,7 +390,10 @@ export class BooksRoutes {
       }
       try {
         if (format === "targz") {
-          const archive = await BookExportRun(req.params.id, config);
+          // Build the archive fully before touching the response: if the
+          // export fails we can still send a proper JSON error, and archive
+          // errors can never corrupt already-sent headers.
+          const tmpFile = await BookExportRun(req.params.id, config);
           const safeName = SafeExportFilename(book.name);
           res.header("Content-Type", "application/gzip");
           res.header(
@@ -392,8 +401,20 @@ export class BooksRoutes {
             `attachment; filename="${safeName}.tar.gz"`,
           );
           res.header("X-Filename", `${safeName}.tar.gz`);
-          // Pipe archive stream to response
-          return res.send(archive);
+          // Stream the temp file; clean it up when the transfer is done.
+          const stream = fs.createReadStream(tmpFile);
+          const cleanup = () => {
+            fs.promises.unlink(tmpFile).catch(() => undefined);
+          };
+          stream.on("close", cleanup);
+          stream.on("error", (err) => {
+            cleanup();
+            // Destroying the response is all we can do here: headers are
+            // already sent. Never throw from a stream callback.
+            req.log.error(`Export stream failed: ${err.message}`);
+            res.raw.destroy();
+          });
+          return res.send(stream);
         }
 
         // Manuscript formats: compile the book in tree order
@@ -406,15 +427,12 @@ export class BooksRoutes {
             return null;
           }
           try {
-            const buffer = await fs.promises.readFile(
-              path.join(
-                config.DATA_DIR,
-                "media",
-                mediaBookId,
-                mediaId,
-                media.filename,
-              ),
+            const filePath = SafeJoin(
+              BookMediaDir(config, mediaBookId),
+              mediaId,
+              media.filename,
             );
+            const buffer = await fs.promises.readFile(filePath);
             return { buffer, mimeType: media.mimeType };
           } catch {
             return null;
@@ -505,12 +523,17 @@ export class BooksRoutes {
           config,
           userSession.userId,
         );
-
-        // Give importer write access
-        await BooksDataSetAccess(book.id, userSession.userId, "write");
-
         return res.status(201).send(book.toTransportJson());
       } catch (err) {
+        if (err instanceof ImportValidationError) {
+          return res.status(400).send({ error: err.message });
+        }
+        if (
+          (err as Error).message?.includes("FST_REQ_FILE_TOO_LARGE") ||
+          (err as any).code === "FST_REQ_FILE_TOO_LARGE"
+        ) {
+          return res.status(413).send({ error: "Archive too large" });
+        }
         return res.status(500).send({
           error: `Import failed: ${err.message || "Unknown error"}`,
         });

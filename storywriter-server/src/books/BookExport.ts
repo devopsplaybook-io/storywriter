@@ -8,7 +8,9 @@ import { Book } from "../model/Book";
 import { Section } from "../model/Section";
 import { BookAttribute } from "../model/BookAttribute";
 import { Property } from "../model/Property";
-import { BooksDataGet, BooksDataAdd } from "./BooksData";
+import { SafeJoin, IsSafePathSegment } from "../utils/SafePath";
+import { DbUtilsTransaction } from "../utils/DbTransaction";
+import { BooksDataGet, BooksDataAdd, BooksDataSetAccess } from "./BooksData";
 import {
   SectionsDataListByBook,
   SectionsDataAdd,
@@ -24,15 +26,34 @@ import {
   PropertiesDataSetSectionValue,
 } from "../properties/PropertiesData";
 import { MediaDataList, MediaDataAdd, Media } from "../media/MediaData";
+import { GenerateMediaFilename, SanitizeOriginalFilename, MatchesMagicBytes } from "../media/MediaValidation";
+import {
+  IMPORT_LIMITS,
+  ImportValidationError,
+  ValidateArchiveEntries,
+  ValidateManifest,
+  ValidateBook,
+  ValidateSections,
+  ValidateProperties,
+  ValidateAttributes,
+  ValidateSectionProperties,
+  ValidateMediaMetadata,
+  ValidateMediaFiles,
+} from "./BookArchiveValidation";
 
 const EXPORT_VERSION = "2.0";
 
 // ==================== EXPORT ====================
 
+/**
+ * Build the export archive into a temp file and resolve with its path. Media
+ * referenced by the database must exist on disk: a missing file fails the
+ * export instead of silently producing an incomplete backup.
+ */
 export async function BookExportRun(
   bookId: string,
   config: Config,
-): Promise<TarArchive> {
+): Promise<string> {
   const book = await BooksDataGet(bookId);
   if (!book) {
     throw new Error("Book not found");
@@ -61,6 +82,20 @@ export async function BookExportRun(
 
   const mediaItems = await MediaDataList(bookId);
 
+  // Normalize archive media names: never write a stored filename into the
+  // archive unless it is a safe single path segment.
+  const archiveMediaName = new Map<string, string>();
+  for (const media of mediaItems) {
+    const name = IsSafePathSegment(media.filename)
+      ? media.filename
+      : GenerateMediaFilename(media.id, media.mimeType);
+    archiveMediaName.set(media.id, name);
+  }
+  const mediaMetadata = mediaItems.map((m) => ({
+    ...m,
+    filename: archiveMediaName.get(m.id),
+  }));
+
   // Build JSON data
   const manifest = {
     version: EXPORT_VERSION,
@@ -75,55 +110,99 @@ export async function BookExportRun(
     attributes: attributes.map((a) => a.toJson()),
     properties: properties.map((p) => p.toJson()),
     sectionProperties,
-    mediaMetadata: mediaItems,
+    mediaMetadata,
   };
 
-  // Create archive — TarArchive extends stream.Transform (readable + writable)
+  await fs.ensureDir(config.TMP_DIR);
+  const tmpFile = SafeJoin(config.TMP_DIR, `export-${uuidv4()}.tar.gz`);
+  const output = fs.createWriteStream(tmpFile);
+
+  // Create archive — TarArchive extends stream.Transform (readable + writable).
+  // Errors are surfaced through `finished`; nothing is thrown from an event
+  // callback (an EventEmitter callback throw escapes route try/catch blocks).
   const archive = new TarArchive({
     gzip: true,
     gzipOptions: { level: 6 },
   });
 
-  archive.on("error", (err) => {
-    throw err;
+  const finished = new Promise<void>((resolve, reject) => {
+    const fail = (err: Error) => {
+      archive.destroy();
+      output.destroy();
+      reject(err);
+    };
+    archive.on("error", fail);
+    output.on("error", fail);
+    output.on("close", () => resolve());
   });
 
-  // Add JSON files
-  archive.append(JSON.stringify(manifest, null, 2), { name: "manifest.json" });
-  archive.append(JSON.stringify(exportData.book, null, 2), {
-    name: "book.json",
-  });
-  archive.append(JSON.stringify(exportData.sections, null, 2), {
-    name: "sections.json",
-  });
-  archive.append(JSON.stringify(exportData.attributes, null, 2), {
-    name: "attributes.json",
-  });
-  archive.append(JSON.stringify(exportData.properties, null, 2), {
-    name: "properties.json",
-  });
-  archive.append(JSON.stringify(exportData.sectionProperties, null, 2), {
-    name: "section-properties.json",
-  });
-  archive.append(JSON.stringify(exportData.mediaMetadata, null, 2), {
-    name: "media-metadata.json",
-  });
+  archive.pipe(output);
 
-  // Add media files from disk
-  for (const media of mediaItems) {
-    const mediaDir = path.join(config.DATA_DIR, "media", bookId, media.id);
-    const filePath = path.join(mediaDir, media.filename);
-    if (fs.existsSync(filePath)) {
-      archive.file(filePath, { name: `media/${media.id}/${media.filename}` });
+  try {
+    // Add JSON files
+    archive.append(JSON.stringify(manifest, null, 2), { name: "manifest.json" });
+    archive.append(JSON.stringify(exportData.book, null, 2), {
+      name: "book.json",
+    });
+    archive.append(JSON.stringify(exportData.sections, null, 2), {
+      name: "sections.json",
+    });
+    archive.append(JSON.stringify(exportData.attributes, null, 2), {
+      name: "attributes.json",
+    });
+    archive.append(JSON.stringify(exportData.properties, null, 2), {
+      name: "properties.json",
+    });
+    archive.append(JSON.stringify(exportData.sectionProperties, null, 2), {
+      name: "section-properties.json",
+    });
+    archive.append(JSON.stringify(exportData.mediaMetadata, null, 2), {
+      name: "media-metadata.json",
+    });
+
+    // Add media files from disk
+    for (const media of mediaItems) {
+      const mediaDir = SafeJoin(config.DATA_DIR, "media", bookId, media.id);
+      const name = archiveMediaName.get(media.id);
+      const filePath = path.join(mediaDir, name);
+      if (!fs.existsSync(filePath)) {
+        throw new Error(
+          `Export failed: media file missing for media ${media.id} (${name})`,
+        );
+      }
+      archive.file(filePath, { name: `media/${media.id}/${name}` });
     }
-  }
 
-  // finalize() returns Promise<void> — kick it off but return the stream immediately
-  archive.finalize();
-  return archive;
+    await Promise.all([archive.finalize(), finished]);
+    return tmpFile;
+  } catch (err) {
+    archive.destroy();
+    output.destroy();
+    await fs.remove(tmpFile).catch(() => undefined);
+    throw err;
+  }
 }
 
 // ==================== IMPORT ====================
+
+async function ReadArchiveJson(
+  tmpDir: string,
+  name: string,
+  required: boolean,
+): Promise<unknown> {
+  const filePath = SafeJoin(tmpDir, name);
+  if (!fs.existsSync(filePath)) {
+    if (required) {
+      throw new ImportValidationError(`Invalid archive: ${name} not found`);
+    }
+    return null;
+  }
+  try {
+    return JSON.parse(await fs.readFile(filePath, "utf-8"));
+  } catch {
+    throw new ImportValidationError(`Invalid archive: ${name} is not valid JSON`);
+  }
+}
 
 export async function BookImportRun(
   archiveBuffer: Buffer,
@@ -131,203 +210,272 @@ export async function BookImportRun(
   ownerId: string,
 ): Promise<Book> {
   const tmpDir = path.join(config.TMP_DIR, `import-${uuidv4()}`);
+  let stagedBookId: string | null = null;
 
   try {
-    // Extract archive to temp directory
     await fs.ensureDir(tmpDir);
     const archivePath = path.join(tmpDir, "archive.tar.gz");
     await fs.writeFile(archivePath, archiveBuffer);
-    await tar.extract({
-      file: archivePath,
-      cwd: tmpDir,
-      gzip: true,
-    });
-    await fs.remove(archivePath);
 
-    // Read manifest
-    const manifestPath = path.join(tmpDir, "manifest.json");
-    if (!fs.existsSync(manifestPath)) {
-      throw new Error("Invalid archive: manifest.json not found");
+    // First pass: list every entry and validate the archive shape.
+    const entries: { path: string; size: number; type: string }[] = [];
+    try {
+      await tar.list({
+        file: archivePath,
+        gzip: true,
+        strict: true,
+        preservePaths: false,
+        maxDecompressionRatio: IMPORT_LIMITS.MAX_GZIP_RATIO,
+        onReadEntry: (entry) => {
+          entries.push({
+            path: entry.path,
+            size: entry.size,
+            type: entry.type,
+          });
+        },
+      });
+    } catch (err) {
+      throw new ImportValidationError(
+        `Invalid archive: ${(err as Error).message}`,
+      );
     }
-    const manifest = JSON.parse(await fs.readFile(manifestPath, "utf-8"));
-    if (manifest.version !== EXPORT_VERSION) {
-      throw new Error(
-        `Unsupported export version: ${manifest.version}. Expected ${EXPORT_VERSION}`,
+    const allowedEntries = ValidateArchiveEntries(entries, archiveBuffer.length);
+
+    // Second pass: extract only the validated entries.
+    try {
+      await tar.extract({
+        file: archivePath,
+        cwd: tmpDir,
+        gzip: true,
+        strict: true,
+        preservePaths: false,
+        maxDecompressionRatio: IMPORT_LIMITS.MAX_GZIP_RATIO,
+        filter: (entryPath: string) => allowedEntries.has(entryPath),
+      });
+    } catch (err) {
+      throw new ImportValidationError(
+        `Invalid archive: ${(err as Error).message}`,
       );
     }
 
-    // Read all JSON files
-    const bookData = JSON.parse(
-      await fs.readFile(path.join(tmpDir, "book.json"), "utf-8"),
+    // Read JSON files (required ones must exist, optional ones default to []).
+    const manifest = await ReadArchiveJson(tmpDir, "manifest.json", true);
+    ValidateManifest(manifest);
+    const bookData = await ReadArchiveJson(tmpDir, "book.json", true);
+    ValidateBook(bookData);
+    const sectionsData = await ReadArchiveJson(tmpDir, "sections.json", true);
+    const attributesData =
+      (await ReadArchiveJson(tmpDir, "attributes.json", false)) || [];
+    const propertiesData =
+      (await ReadArchiveJson(tmpDir, "properties.json", false)) || [];
+    const sectionPropertiesData =
+      (await ReadArchiveJson(tmpDir, "section-properties.json", false)) || [];
+    const mediaMetadataData =
+      (await ReadArchiveJson(tmpDir, "media-metadata.json", false)) || [];
+    // Legacy files are tolerated and ignored (tables dropped in init-0002).
+    await ReadArchiveJson(tmpDir, "section-versions.json", false);
+    await ReadArchiveJson(tmpDir, "attribute-versions.json", false);
+
+    // Schema validation
+    ValidateMediaMetadata(mediaMetadataData);
+    const mediaIds = new Set(
+      (mediaMetadataData as Record<string, unknown>[]).map((m) => m.id as string),
     );
-    const sectionsData = JSON.parse(
-      await fs.readFile(path.join(tmpDir, "sections.json"), "utf-8"),
+    const mediaFileEntries = new Map<string, number>();
+    for (const entry of entries) {
+      const match = /^media\/([^/]+)\/([^/]+)$/.exec(entry.path);
+      if (match && entry.type === "File") {
+        mediaFileEntries.set(entry.path, entry.size);
+      }
+    }
+    ValidateMediaFiles(mediaFileEntries, mediaMetadataData as Record<string, unknown>[]);
+    const orderedSections = ValidateSections(sectionsData, mediaIds);
+    ValidateAttributes(attributesData);
+    ValidateProperties(propertiesData);
+    const sectionIds = new Set(orderedSections.map((s) => s.id as string));
+    const propertyIds = new Set(
+      (propertiesData as Record<string, unknown>[]).map((p) => p.id as string),
     );
-    const attributesData = JSON.parse(
-      await fs.readFile(path.join(tmpDir, "attributes.json"), "utf-8"),
-    );
-    const propertiesData = JSON.parse(
-      await fs.readFile(path.join(tmpDir, "properties.json"), "utf-8"),
-    );
-    const sectionPropertiesData = JSON.parse(
-      await fs.readFile(path.join(tmpDir, "section-properties.json"), "utf-8"),
-    );
-    const mediaMetadataData = JSON.parse(
-      await fs.readFile(path.join(tmpDir, "media-metadata.json"), "utf-8"),
-    );
+    ValidateSectionProperties(sectionPropertiesData, sectionIds, propertyIds);
 
     // Create new book
     const newBook = new Book();
-    newBook.name = bookData.name;
-    newBook.description = bookData.description || "";
-    newBook.dateCreated = bookData.dateCreated || new Date().toISOString();
+    newBook.name = (bookData as Record<string, unknown>).name as string;
+    newBook.description =
+      ((bookData as Record<string, unknown>).description as string) || "";
+    newBook.dateCreated =
+      ((bookData as Record<string, unknown>).dateCreated as string) ||
+      new Date().toISOString();
     newBook.writingGoal = Math.max(
       0,
-      Math.floor(Number(bookData.writingGoal) || 0),
+      Math.floor(
+        Number((bookData as Record<string, unknown>).writingGoal) || 0,
+      ),
     );
     newBook.ownerId = ownerId || null;
-    await BooksDataAdd(newBook);
+    stagedBookId = newBook.id;
 
-    // Create ID mappings
-    const sectionIdMap = new Map<string, string>(); // old → new
+    // Build ID maps (old → new)
+    const sectionIdMap = new Map<string, string>();
     const propertyIdMap = new Map<string, string>();
     const mediaIdMap = new Map<string, string>();
     const attributeIdMap = new Map<string, string>();
 
-    // Map media IDs first (needed for sections that reference media)
-    for (const mediaMeta of mediaMetadataData) {
-      mediaIdMap.set(mediaMeta.id, uuidv4());
+    for (const mediaMeta of mediaMetadataData as Record<string, unknown>[]) {
+      mediaIdMap.set(mediaMeta.id as string, uuidv4());
+    }
+    for (const sec of orderedSections) {
+      sectionIdMap.set(sec.id as string, uuidv4());
+    }
+    for (const prop of propertiesData as Record<string, unknown>[]) {
+      propertyIdMap.set(prop.id as string, uuidv4());
+    }
+    for (const attr of attributesData as Record<string, unknown>[]) {
+      attributeIdMap.set(attr.id as string, uuidv4());
     }
 
-    // Map section IDs
-    for (const sec of sectionsData) {
-      sectionIdMap.set(sec.id, uuidv4());
-    }
-
-    // Map property IDs
-    for (const prop of propertiesData) {
-      propertyIdMap.set(prop.id, uuidv4());
-    }
-
-    // Map attribute IDs
-    for (const attr of attributesData) {
-      attributeIdMap.set(attr.id, uuidv4());
-    }
-
-    // Import sections — topologically sort so parents are inserted before children
-    const sectionsToInsert = [...sectionsData];
-    const insertedSectionIds = new Set<string>();
-    while (sectionsToInsert.length > 0) {
-      const batch: typeof sectionsData = [];
-      const remaining: typeof sectionsData = [];
-      for (const sec of sectionsToInsert) {
-        const parentNewId = sec.parentId
-          ? sectionIdMap.get(sec.parentId) || null
-          : null;
-        // A section can be inserted if it has no parent, or its parent has already been inserted
-        if (!parentNewId || insertedSectionIds.has(parentNewId)) {
-          batch.push(sec);
-        } else {
-          remaining.push(sec);
-        }
+    // Stage validated media files into the new book's media dir (server
+    // generated filenames — archive names are never used as filesystem paths).
+    const newBookMediaDir = SafeJoin(config.DATA_DIR, "media", newBook.id);
+    for (const mediaMeta of mediaMetadataData as Record<string, unknown>[]) {
+      const newMediaId = mediaIdMap.get(mediaMeta.id as string);
+      const mimeType = mediaMeta.mimeType as string;
+      const newFilename = GenerateMediaFilename(newMediaId, mimeType);
+      const srcPath = SafeJoin(
+        tmpDir,
+        "media",
+        mediaMeta.id as string,
+        mediaMeta.filename as string,
+      );
+      const buffer = await fs.readFile(srcPath);
+      if (buffer.length !== mediaMeta.size) {
+        throw new ImportValidationError(
+          `Invalid archive: media file size mismatch for media ${mediaMeta.id as string}`,
+        );
       }
-      // Safety: if no progress was made, insert remaining anyway to avoid infinite loop
-      if (batch.length === 0) {
-        sectionsToInsert.splice(0, sectionsToInsert.length, ...remaining);
-        break;
+      if (!MatchesMagicBytes(buffer, mimeType)) {
+        throw new ImportValidationError(
+          `Invalid archive: media file content does not match its MIME type (${mimeType})`,
+        );
       }
-      for (const sec of batch) {
-        const section = new Section();
-        section.id = sectionIdMap.get(sec.id);
+      const destDir = SafeJoin(newBookMediaDir, newMediaId);
+      await fs.ensureDir(destDir);
+      await fs.writeFile(path.join(destDir, newFilename), buffer);
+    }
+
+    // Ensure media slugs are unique within the imported batch.
+    const usedSlugs = new Set<string>();
+    const slugFor = (mediaMeta: Record<string, unknown>): string => {
+      let base = SanitizeOriginalFilename(mediaMeta.slug as string)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .substring(0, 150);
+      if (!base) {
+        base = SanitizeOriginalFilename(mediaMeta.filename as string)
+          .toLowerCase()
+          .replace(/\.[^.]+$/, "")
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .substring(0, 150);
+      }
+      if (!base) {
+        base = "media";
+      }
+      let candidate = base;
+      let counter = 1;
+      while (usedSlugs.has(candidate)) {
+        candidate = `${base}-${counter}`;
+        counter++;
+      }
+      usedSlugs.add(candidate);
+      return candidate;
+    };
+
+    // Single transaction: the book is either fully imported or not at all.
+    // DB work only — media files were staged above and temp cleanup happens
+    // outside the transaction.
+    await DbUtilsTransaction(async () => {
+      await BooksDataAdd(newBook);
+
+      // Sections in parent-first order, preserving content and AI notes.
+      for (const sec of orderedSections) {
+        const section = Section.fromJson(sec);
+        section.id = sectionIdMap.get(sec.id as string);
         section.bookId = newBook.id;
         section.parentId = sec.parentId
-          ? sectionIdMap.get(sec.parentId) || null
+          ? sectionIdMap.get(sec.parentId as string) || null
           : null;
-        section.type = sec.type || "text";
         // Root section must always be a container
         if (!section.parentId) {
           section.type = "container";
         }
-        section.title = sec.title || "";
-        section.content = sec.content || "";
         section.mediaId = sec.mediaId
-          ? mediaIdMap.get(sec.mediaId) || null
+          ? mediaIdMap.get(sec.mediaId as string) || null
           : null;
-        section.caption = sec.caption || "";
-        section.orderIndex = sec.orderIndex || 0;
-        section.dateCreated = sec.dateCreated || new Date().toISOString();
-        section.dateUpdated = sec.dateUpdated || new Date().toISOString();
         await SectionsDataAdd(section);
-        insertedSectionIds.add(section.id);
       }
-      sectionsToInsert.length = 0;
-      sectionsToInsert.push(...remaining);
-    }
 
-    // Import attributes
-    for (const attr of attributesData) {
-      const newAttr = BookAttribute.fromJson(attr);
-      newAttr.id = attributeIdMap.get(attr.id);
-      newAttr.bookId = newBook.id;
-      await BookAttributesDataAdd(newAttr);
-    }
+      for (const attr of attributesData as Record<string, unknown>[]) {
+        const newAttr = BookAttribute.fromJson(attr);
+        newAttr.id = attributeIdMap.get(attr.id as string);
+        newAttr.bookId = newBook.id;
+        await BookAttributesDataAdd(newAttr);
+      }
 
-    // Import properties
-    for (const prop of propertiesData) {
-      const newProp = Property.fromJson(prop);
-      newProp.id = propertyIdMap.get(prop.id);
-      newProp.bookId = newBook.id;
-      await PropertiesDataAdd(newProp);
-    }
+      for (const prop of propertiesData as Record<string, unknown>[]) {
+        const newProp = Property.fromJson(prop);
+        newProp.id = propertyIdMap.get(prop.id as string);
+        newProp.bookId = newBook.id;
+        await PropertiesDataAdd(newProp);
+      }
 
-    // Import section property values
-    for (const sp of sectionPropertiesData) {
-      const newSectionId = sectionIdMap.get(sp.sectionId);
-      const newPropertyId = propertyIdMap.get(sp.propertyId);
-      if (!newSectionId || !newPropertyId) continue;
-      await PropertiesDataSetSectionValue(
-        newSectionId,
-        newPropertyId,
-        sp.value,
-      );
-    }
-
-    // Import media
-    for (const mediaMeta of mediaMetadataData) {
-      const newMediaId = mediaIdMap.get(mediaMeta.id);
-      const newMedia: Media = {
-        id: newMediaId,
-        bookId: newBook.id,
-        slug: mediaMeta.slug,
-        filename: mediaMeta.filename,
-        mimeType: mediaMeta.mimeType,
-        size: mediaMeta.size,
-        dateCreated: mediaMeta.dateCreated,
-      };
-      await MediaDataAdd(newMedia);
-
-      // Copy media file from temp dir to DATA_DIR
-      const srcPath = path.join(
-        tmpDir,
-        "media",
-        mediaMeta.id,
-        mediaMeta.filename,
-      );
-      if (fs.existsSync(srcPath)) {
-        const destDir = path.join(
-          config.DATA_DIR,
-          "media",
-          newBook.id,
-          newMediaId,
+      for (const sp of sectionPropertiesData as Record<string, unknown>[]) {
+        const newSectionId = sectionIdMap.get(sp.sectionId as string);
+        const newPropertyId = propertyIdMap.get(sp.propertyId as string);
+        if (!newSectionId || !newPropertyId) continue;
+        await PropertiesDataSetSectionValue(
+          newSectionId,
+          newPropertyId,
+          sp.value as string,
         );
-        await fs.ensureDir(destDir);
-        await fs.copy(srcPath, path.join(destDir, mediaMeta.filename));
       }
-    }
+
+      for (const mediaMeta of mediaMetadataData as Record<string, unknown>[]) {
+        const newMediaId = mediaIdMap.get(mediaMeta.id as string);
+        const newMedia: Media = {
+          id: newMediaId,
+          bookId: newBook.id,
+          slug: slugFor(mediaMeta),
+          filename: GenerateMediaFilename(newMediaId, mediaMeta.mimeType as string),
+          originalFilename: SanitizeOriginalFilename(
+            (mediaMeta.originalFilename as string) ||
+              (mediaMeta.filename as string),
+          ),
+          mimeType: mediaMeta.mimeType as string,
+          size: mediaMeta.size as number,
+          dateCreated:
+            (mediaMeta.dateCreated as string) || new Date().toISOString(),
+        };
+        await MediaDataAdd(newMedia);
+      }
+
+      // The importer gets write access inside the same transaction so a
+      // failure never leaves an inaccessible partial book.
+      await BooksDataSetAccess(newBook.id, ownerId, "write");
+    });
 
     return newBook;
+  } catch (err) {
+    // The transaction rolled back: remove any staged media files so a failed
+    // import leaves no rows, no files and no temp dir.
+    if (stagedBookId) {
+      await fs
+        .remove(SafeJoin(config.DATA_DIR, "media", stagedBookId))
+        .catch(() => undefined);
+    }
+    throw err;
   } finally {
-    // Clean up temp directory
-    await fs.remove(tmpDir);
+    await fs.remove(tmpDir).catch(() => undefined);
   }
 }

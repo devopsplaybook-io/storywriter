@@ -313,6 +313,14 @@ function getFilePath(bookId: string): string {
   return path.join(config.DATA_DIR, `book-analysis-${bookId}.json`);
 }
 
+/**
+ * Remove the cached analysis report of a book (used when the book is deleted).
+ * The path is built from a book id that the caller has already validated.
+ */
+export async function BookAnalysisDeleteCache(bookId: string): Promise<void> {
+  await fs.remove(getFilePath(bookId));
+}
+
 const BOOK_ANALYSIS_SYSTEM_PROMPT =
   "You are an expert writing coach and book editor. " +
   "Analyze the provided book structure, content, and metadata to give actionable insights.\n\n" +
