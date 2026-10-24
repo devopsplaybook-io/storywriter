@@ -45,7 +45,12 @@
         @click="$emit('select', item)"
         @contextmenu.prevent="openContextMenu($event, item)"
       >
-        <img :src="getMediaUrl(item)" :alt="item.slug" loading="lazy" />
+        <img
+          v-if="thumbUrls[item.id]"
+          :src="thumbUrls[item.id]"
+          :alt="item.slug"
+          loading="lazy"
+        />
         <div class="media-info">
           <span class="media-slug">{{ item.slug }}</span>
           <span class="media-size">{{ formatSize(item.size) }}</span>
@@ -107,7 +112,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useMediaStore } from "../stores/media";
 
 const props = defineProps({
@@ -131,6 +136,39 @@ const fileInput = ref(null);
 
 const mediaList = computed(() => mediaStore.getMediaForBook(props.bookId));
 
+// Thumbnails via in-memory object URLs (the file route requires the
+// Authorization header, which <img> cannot send)
+const thumbUrls = reactive({});
+const trackedThumbs = new Map(); // mediaId -> bookId
+
+function reconcileThumbs() {
+  const wanted = new Map();
+  for (const item of mediaList.value) {
+    wanted.set(item.id, props.bookId);
+  }
+  for (const [mediaId, bookId] of Array.from(trackedThumbs)) {
+    if (wanted.get(mediaId) !== bookId) {
+      mediaStore.releaseMediaObjectUrl(bookId, mediaId);
+      trackedThumbs.delete(mediaId);
+      delete thumbUrls[mediaId];
+    }
+  }
+  for (const [mediaId, bookId] of wanted) {
+    if (trackedThumbs.has(mediaId)) continue;
+    trackedThumbs.set(mediaId, bookId);
+    mediaStore
+      .fetchMediaObjectUrl(bookId, mediaId)
+      .then((url) => {
+        thumbUrls[mediaId] = url;
+      })
+      .catch(() => {
+        // Thumbnail stays hidden; slug and size are still shown
+      });
+  }
+}
+
+watch([mediaList, () => props.bookId], reconcileThumbs, { immediate: true });
+
 onMounted(async () => {
   await mediaStore.fetchMedia(props.bookId);
   document.addEventListener("click", closeContextMenu);
@@ -138,11 +176,11 @@ onMounted(async () => {
 
 onUnmounted(() => {
   document.removeEventListener("click", closeContextMenu);
+  for (const [mediaId, bookId] of trackedThumbs) {
+    mediaStore.releaseMediaObjectUrl(bookId, mediaId);
+  }
+  trackedThumbs.clear();
 });
-
-function getMediaUrl(item) {
-  return mediaStore.getMediaUrl(props.bookId, item.id);
-}
 
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + " B";

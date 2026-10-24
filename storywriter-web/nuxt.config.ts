@@ -39,22 +39,16 @@ export default defineNuxtConfig({
       // manifest, so the fallback must reference "/" not "index.html"
       navigateFallback: "/",
       cleanupOutdatedCaches: true,
+      // Only hashed build assets are cached at runtime: the urlPattern matches
+      // /_nuxt/ asset URLs only, so private media and every /api/ response can
+      // never enter a cache (see USER_INTERFACE spec).
       runtimeCaching: [
         {
-          urlPattern: /\.(?:png|jpg|jpeg|gif|webp|svg|woff2?)$/,
+          urlPattern: /\/_nuxt\/.*\.(?:png|jpg|jpeg|gif|webp|svg|woff2?)$/,
           handler: "CacheFirst",
           options: {
             cacheName: "static-assets",
             expiration: { maxEntries: 100, maxAgeSeconds: 30 * 24 * 60 * 60 },
-          },
-        },
-        {
-          urlPattern: /^\/api\/books\/.*\/media\/.*\/file/,
-          handler: "CacheFirst",
-          options: {
-            cacheName: "media-files",
-            expiration: { maxEntries: 200, maxAgeSeconds: 30 * 24 * 60 * 60 },
-            cacheableResponse: { statuses: [0, 200] },
           },
         },
       ],

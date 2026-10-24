@@ -59,6 +59,15 @@ Media items (pictures) can be attached to books and referenced by sections. Medi
 - [x] Empty state: "Drag and drop images here or click to upload"
 - [x] Accessible as sidebar tab (bi-image icon)
 
+## Serving Policy
+
+- [x] The file route (`GET /api/books/:bookId/media/:id/file`) authenticates with the `Authorization` header only; tokens passed as a query parameter are never accepted
+- [x] Media displayed in the UI via in-memory object URLs: the web app fetches the file as a blob (Authorization header) and renders it through a `blob:` URL, so no token ever appears in a URL
+- [x] `X-Content-Type-Options: nosniff` on every media file response
+- [x] `Content-Disposition: inline` only for safe bitmap types (JPEG, PNG, GIF, WebP); SVG and any other type are served as `attachment`
+- [x] `Cache-Control: private, no-store` on media file responses (private content is never cached by browsers, proxies or the service worker)
+- [x] Upload MIME allow-list with magic-bytes check and server-generated filenames
+
 ## Section Integration
 
 - [x] Sections can reference a media item via `mediaId` field
@@ -68,4 +77,4 @@ Media items (pictures) can be attached to books and referenced by sections. Medi
 - [x] Optional caption with markdown support
 - [x] Media selector dropdown in section editor
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-23_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-24_

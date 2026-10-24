@@ -83,7 +83,7 @@
           </select>
         </div>
         <div v-if="selectedMediaId" class="media-preview">
-          <img :src="mediaUrl" :alt="selectedMedia?.slug" />
+          <img v-if="mediaObjectUrl" :src="mediaObjectUrl" :alt="selectedMedia?.slug" />
         </div>
         <div v-if="selectedMediaId" class="caption-section">
           <label>Caption (markdown supported):</label>
@@ -97,6 +97,7 @@
           <div
             v-if="caption"
             class="caption-preview"
+            v-media-images
             v-html="renderedCaption"
           />
         </div>
@@ -222,7 +223,12 @@
             @keyup="onCaretMoved"
           />
         </div>
-        <div v-else-if="tab === 'preview'" class="preview-content" v-html="renderedContent" />
+        <div
+          v-else-if="tab === 'preview'"
+          class="preview-content"
+          v-media-images
+          v-html="renderedContent"
+        />
 
         <!-- AI Notes tab -->
         <div v-else class="ai-notes-content">
@@ -316,7 +322,6 @@
 </template>
 
 <script setup>
-import { marked } from "marked";
 import { watchDebounced } from "@vueuse/core";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useLlmStore } from "../stores/llm";
@@ -333,6 +338,7 @@ import {
 } from "../utils/drafts";
 import { AI_ACTIONS } from "../utils/aiActions";
 import { countWords } from "../utils/wordCount";
+import { renderMarkdown } from "../utils/safeMarkdown";
 import {
   insertLink,
   insertPrefix,
@@ -618,44 +624,59 @@ const selectedMedia = computed(() => {
   return props.mediaList.find((m) => m.id === selectedMediaId.value) || null;
 });
 
-const mediaUrl = computed(() => {
-  if (!selectedMedia.value || !props.section) return "";
-  return mediaStore.getMediaUrl(props.section.bookId, selectedMedia.value.id);
+// Media preview via an in-memory object URL (the file route requires the
+// Authorization header, which <img> cannot send)
+const mediaObjectUrl = ref("");
+let trackedMedia = null;
+
+watch(
+  [selectedMediaId, () => props.section?.bookId],
+  async ([mediaId, bookId]) => {
+    if (trackedMedia) {
+      mediaStore.releaseMediaObjectUrl(
+        trackedMedia.bookId,
+        trackedMedia.mediaId,
+      );
+      trackedMedia = null;
+      mediaObjectUrl.value = "";
+    }
+    if (mediaId && bookId) {
+      trackedMedia = { bookId, mediaId };
+      try {
+        mediaObjectUrl.value = await mediaStore.fetchMediaObjectUrl(
+          bookId,
+          mediaId,
+        );
+      } catch {
+        mediaObjectUrl.value = "";
+      }
+    }
+  },
+  { immediate: true },
+);
+
+onBeforeUnmount(() => {
+  if (trackedMedia) {
+    mediaStore.releaseMediaObjectUrl(trackedMedia.bookId, trackedMedia.mediaId);
+    trackedMedia = null;
+  }
 });
 
 const renderedContent = computed(() => {
   if (!content.value) return "<p class='empty-hint'>No content yet.</p>";
-  return renderMarkdown(content.value, props.section?.bookId);
+  return renderMarkdown(content.value, {
+    bookId: props.section?.bookId,
+    resolveMediaSlug: mediaStore.getMediaBySlug,
+  });
 });
 
 const renderedCaption = computed(() => {
   if (!caption.value) return "";
-  return renderMarkdown(caption.value, props.section?.bookId);
+  return renderMarkdown(caption.value, {
+    bookId: props.section?.bookId,
+    resolveMediaSlug: mediaStore.getMediaBySlug,
+  });
 });
-
-function renderMarkdown(content, bookId) {
-  if (!content) return "";
-  const renderer = new marked.Renderer();
-  renderer.image = ({ href, text }) => {
-    if (!href) return "";
-    if (/^(https?:\/\/|data:)/.test(href)) {
-      return `<img src="${href}" alt="${text || ""}" />`;
-    }
-    if (!bookId) {
-      return `<img src="${href}" alt="${text || ""}" />`;
-    }
-    const slug = href.replace(/\.[^/.]+$/, "");
-    const media =
-      mediaStore.getMediaBySlug(bookId, slug) ||
-      mediaStore.getMediaBySlug(bookId, href);
-    if (media) {
-      const url = mediaStore.getMediaUrl(bookId, media.id);
-      return `<img src="${url}" alt="${text || ""}" />`;
-    }
-    return `<img src="${href}" alt="${text || ""}" />`;
-  };
-  return marked(content, { breaks: true, renderer });
-}
 
 watch(
   () => props.section?.id,

@@ -75,7 +75,7 @@
             placeholder="Describe this attribute in markdown..."
             rows="8"
           />
-          <div v-else class="attr-preview" v-html="renderedPreview" />
+          <div v-else class="attr-preview" v-media-images v-html="renderedPreview" />
           <div class="attr-edit-actions">
             <button class="btn-small" @click="saveEdit">
               <i class="bi bi-check-lg" /> Save
@@ -114,7 +114,7 @@
               <h4>
                 {{ selectedVersion.title }} (v{{ selectedVersion.version }})
               </h4>
-              <div class="version-content" v-html="renderedVersionContent" />
+              <div class="version-content" v-media-images v-html="renderedVersionContent" />
             </div>
             <template v-else>
               <table v-if="versions.length > 0">
@@ -170,10 +170,11 @@
 </template>
 
 <script setup>
-import { marked } from "marked";
 import { watchDebounced } from "@vueuse/core";
+import { useMediaStore } from "../stores/media";
 import { useSaveStatusStore } from "../stores/saveStatus";
 import { useToastsStore } from "../stores/toasts";
+import { renderMarkdown } from "../utils/safeMarkdown";
 import {
   clearDraft,
   hasNewerDraft,
@@ -186,6 +187,7 @@ const props = defineProps({
 });
 
 const attrStore = useBookAttributesStore();
+const mediaStore = useMediaStore();
 const saveStatus = useSaveStatusStore();
 const toastsStore = useToastsStore();
 
@@ -205,12 +207,18 @@ const attributes = computed(() => attrStore.attributes);
 
 const renderedPreview = computed(() => {
   if (!editContent.value) return "<p class='empty-hint'>No content.</p>";
-  return marked(editContent.value, { breaks: true });
+  return renderMarkdown(editContent.value, {
+    bookId: props.bookId,
+    resolveMediaSlug: mediaStore.getMediaBySlug,
+  });
 });
 
 const renderedVersionContent = computed(() => {
   if (!selectedVersion.value?.content) return "";
-  return marked(selectedVersion.value.content, { breaks: true });
+  return renderMarkdown(selectedVersion.value.content, {
+    bookId: props.bookId,
+    resolveMediaSlug: mediaStore.getMediaBySlug,
+  });
 });
 
 function formatDate(dateStr) {

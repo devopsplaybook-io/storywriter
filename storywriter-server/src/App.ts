@@ -31,6 +31,7 @@ import { LlmClientInit } from "./analysis/LlmClient";
 import { LlmRoutes } from "./analysis/LlmRoutes";
 import { MediaRoutes } from "./media/MediaRoutes";
 import { LegacyMetadataMigrate } from "./utils/LegacyMetadata";
+import { RegisterSecurityHeaders } from "./SecurityHeaders";
 
 import fastifyCompress from "@fastify/compress";
 import fastifyMultipart from "@fastify/multipart";
@@ -85,6 +86,8 @@ Promise.resolve().then(async () => {
       level: "error",
     },
   });
+
+  RegisterSecurityHeaders(fastify, path.join(__dirname, "../web"));
 
   await fastify.register(fastifyCompress, {
     global: true,

@@ -30,7 +30,8 @@
             <div
               v-if="item.type === 'text' && item.content"
               class="section-block-text"
-              v-html="renderMarkdown(item.content, item.bookId)"
+              v-media-images
+              v-html="sectionMarkdown(item.content, item.bookId)"
             />
             <div v-else-if="item.type === 'media'" class="section-block-media">
               <img
@@ -100,7 +101,8 @@
               <div
                 v-else
                 class="section-block-text"
-                v-html="renderMarkdown(item.content, item.bookId)"
+                v-media-images
+                v-html="sectionMarkdown(item.content, item.bookId)"
               />
             </template>
 
@@ -137,7 +139,6 @@
 </template>
 
 <script setup>
-import { marked } from "marked";
 import { watchDebounced } from "@vueuse/core";
 import {
   computed,
@@ -150,6 +151,7 @@ import {
   watch,
 } from "vue";
 import { useMediaStore } from "../stores/media";
+import { renderMarkdown } from "../utils/safeMarkdown";
 
 const props = defineProps({
   section: { type: Object, required: true },
@@ -205,46 +207,54 @@ function getChildCount(parentId) {
   return props.getChildren(parentId).length;
 }
 
-function renderMarkdown(content, bookId) {
-  if (!content) return "";
-  const renderer = new marked.Renderer();
-  renderer.image = ({ href, text }) => {
-    if (!href) return "";
-    // Skip absolute URLs (http/https/data URIs)
-    if (/^(https?:\/\/|data:)/.test(href)) {
-      return `<img src="${href}" alt="${text || ""}" />`;
-    }
-    if (!bookId) {
-      return `<img src="${href}" alt="${text || ""}" />`;
-    }
-    // Try to resolve as media slug (with or without extension)
-    const slug = href.replace(/\.[^/.]+$/, "");
-    const media =
-      mediaStore.getMediaBySlug(bookId, slug) ||
-      mediaStore.getMediaBySlug(bookId, href);
-    if (media) {
-      const url = buildMediaUrl(bookId, media.id);
-      return `<img src="${url}" alt="${text || ""}" />`;
-    }
-    return `<img src="${href}" alt="${text || ""}" />`;
-  };
-  return marked(content, { breaks: true, renderer });
+function sectionMarkdown(content, bookId) {
+  return renderMarkdown(content, {
+    bookId,
+    resolveMediaSlug: mediaStore.getMediaBySlug,
+  });
 }
 
-function buildMediaUrl(bookId, mediaId) {
-  const base = `/api/books/${bookId}/media/${mediaId}/file`;
-  if (typeof window !== "undefined") {
-    const token = localStorage.getItem("token");
-    if (token) {
-      return `${base}?token=${encodeURIComponent(token)}`;
+// Media sections display their image via an in-memory object URL (the file
+// route requires the Authorization header, which <img> cannot send)
+const mediaUrls = reactive({});
+const trackedMedia = new Map(); // sectionId -> { bookId, mediaId }
+
+function reconcileMediaUrls(items) {
+  const wanted = new Map();
+  for (const item of items) {
+    if (item.type === "media" && item.mediaId && item.bookId) {
+      wanted.set(item.id, { bookId: item.bookId, mediaId: item.mediaId });
     }
   }
-  return base;
+  for (const [sectionId, tracked] of Array.from(trackedMedia)) {
+    const keep = wanted.get(sectionId);
+    if (
+      !keep ||
+      keep.bookId !== tracked.bookId ||
+      keep.mediaId !== tracked.mediaId
+    ) {
+      mediaStore.releaseMediaObjectUrl(tracked.bookId, tracked.mediaId);
+      trackedMedia.delete(sectionId);
+      delete mediaUrls[sectionId];
+    }
+  }
+  for (const [sectionId, wantedRef] of wanted) {
+    if (trackedMedia.has(sectionId)) continue;
+    trackedMedia.set(sectionId, wantedRef);
+    mediaStore
+      .fetchMediaObjectUrl(wantedRef.bookId, wantedRef.mediaId)
+      .then((url) => {
+        mediaUrls[sectionId] = url;
+      })
+      .catch(() => {
+        // Image stays hidden; metadata still shows the caption
+      });
+  }
 }
 
 function getMediaUrl(item) {
   if (!item.mediaId || !item.bookId) return null;
-  return buildMediaUrl(item.bookId, item.mediaId);
+  return mediaUrls[item.id] || null;
 }
 
 function onTitleBlur(item, event) {
@@ -391,6 +401,14 @@ watch(
   },
 );
 
+watch(
+  flatSections,
+  (items) => {
+    reconcileMediaUrls(items);
+  },
+  { immediate: true },
+);
+
 // Re-run autoResize when new sections become visible (lazy loading)
 watch(visibleSections, () => {
   autoResizeAllTextareas();
@@ -402,6 +420,10 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   cleanupObserver();
+  for (const [, tracked] of trackedMedia) {
+    mediaStore.releaseMediaObjectUrl(tracked.bookId, tracked.mediaId);
+  }
+  trackedMedia.clear();
 });
 </script>
 

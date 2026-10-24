@@ -11,6 +11,21 @@ export interface Media {
   dateCreated: string;
 }
 
+interface ObjectUrlEntry {
+  url: string;
+  refs: number;
+  promise: Promise<string> | null;
+}
+
+// Object URLs for private media: fetched as blobs (Authorization header) and
+// kept in memory only, so nothing private ever lands in a URL, an HTTP cache
+// or the service worker. Keyed `bookId/mediaId` with reference counting.
+const objectUrlEntries = new Map<string, ObjectUrlEntry>();
+
+function entryKey(bookId: string, mediaId: string): string {
+  return `${bookId}/${mediaId}`;
+}
+
 export const useMediaStore = defineStore("media", {
   state: () => ({
     mediaByBook: {} as Record<string, Media[]>,
@@ -69,15 +84,67 @@ export const useMediaStore = defineStore("media", {
       }
     },
 
+    /**
+     * Tokenless media file URL. The server only accepts the Authorization
+     * header on this route, so use fetchMediaObjectUrl to display media.
+     */
     getMediaUrl(bookId: string, mediaId: string): string {
-      const base = `/api/books/${bookId}/media/${mediaId}/file`;
-      if (typeof window !== "undefined") {
-        const token = localStorage.getItem("token");
-        if (token) {
-          return `${base}?token=${encodeURIComponent(token)}`;
-        }
+      return `/api/books/${bookId}/media/${mediaId}/file`;
+    },
+
+    /**
+     * Fetch a media file as a blob and return an in-memory object URL for it.
+     * Concurrent callers share one fetch; release each claim with
+     * releaseMediaObjectUrl.
+     */
+    async fetchMediaObjectUrl(
+      bookId: string,
+      mediaId: string,
+    ): Promise<string> {
+      const key = entryKey(bookId, mediaId);
+      const existing = objectUrlEntries.get(key);
+      if (existing) {
+        existing.refs += 1;
+        return existing.promise ?? existing.url;
       }
-      return base;
+      const entry: ObjectUrlEntry = { url: "", refs: 1, promise: null };
+      entry.promise = api
+        .get(`/books/${bookId}/media/${mediaId}/file`, {
+          responseType: "blob",
+        })
+        .then((res) => {
+          entry.url = URL.createObjectURL(res.data);
+          entry.promise = null;
+          if (entry.refs <= 0) {
+            // Every consumer went away while the fetch was in flight
+            URL.revokeObjectURL(entry.url);
+            objectUrlEntries.delete(key);
+          }
+          return entry.url;
+        })
+        .catch((err) => {
+          if (objectUrlEntries.get(key) === entry) {
+            objectUrlEntries.delete(key);
+          }
+          throw err;
+        });
+      objectUrlEntries.set(key, entry);
+      return entry.promise;
+    },
+
+    /**
+     * Drop one claim produced by fetchMediaObjectUrl; the object URL is
+     * revoked when the last claim is released.
+     */
+    releaseMediaObjectUrl(bookId: string, mediaId: string): void {
+      const key = entryKey(bookId, mediaId);
+      const entry = objectUrlEntries.get(key);
+      if (!entry) return;
+      entry.refs -= 1;
+      if (entry.refs <= 0 && entry.url) {
+        URL.revokeObjectURL(entry.url);
+        objectUrlEntries.delete(key);
+      }
     },
   },
 });
