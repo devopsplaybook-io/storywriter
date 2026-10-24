@@ -13,6 +13,7 @@ It is installable on mobile and desktop devices; the app shell (interface, style
 - [x] **Offline banner**: An unobtrusive banner tells the user when the browser is offline and what still works.
 - [x] **PNG app icons**: 192/512 `any` plus 192/512 `maskable` PNG icons so installation works across platforms (SVG icon kept for browsers that prefer it).
 - [x] **Toast notifications**: A small global toast system surfaces save and action errors (and successes) instead of silent failures.
+- [x] **Authorization errors**: A `403` response surfaces a "no permission" toast and keeps the session; only `401` (or a `403` without a locally valid session token) ends the session and returns to the login page.
 - [x] **Unrestricted zoom**: The page viewport does not block pinch-zoom (no `user-scalable=no` / `maximum-scale`).
 
 ## Navigation
@@ -44,7 +45,6 @@ The book detail page uses a **responsive split-pane layout** following the feedw
 
 - [x] Action icons (add, delete, edit, etc.) that are hover-revealed on desktop are **always visible** on touch/mobile devices.
 - [x] Form edit rows stack vertically on narrow screens.
-- [x] Attribute meta info (version badge) is hidden on mobile to save space.
 
 ## Pages
 
@@ -53,6 +53,7 @@ The book detail page uses a **responsive split-pane layout** following the feedw
 - [x] Responsive grid of book cards.
 - [x] On mobile: single column layout, full-width "New Book" button.
 - [x] Each card shows book name, description, date, and action icons (access, edit, delete).
+- [x] Card actions are **gated by the caller's permission**: access management and delete are shown to owners and admins only, edit to owners/admins/writers; export is always shown.
 - [x] **Export dialog**: the card export icon opens a dialog with a format choice (Markdown .md / Word .docx / EPUB .epub / Backup .tar.gz) as a responsive CSS Grid; an "Include AI notes and properties" checkbox is offered for the manuscript formats (disabled for the backup archive).
 
 ### Book Detail (`/books/:id`)

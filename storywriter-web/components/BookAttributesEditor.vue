@@ -25,17 +25,11 @@
           @click="startEdit(attr)"
         >
           <span class="attr-title">{{ attr.title || "Untitled" }}</span>
-          <span class="attr-meta">v{{ attr.version }}</span>
           <span class="attr-actions">
             <i
               class="bi bi-pencil"
               title="Edit"
               @click.stop="startEdit(attr)"
-            />
-            <i
-              class="bi bi-clock-history"
-              title="Versions"
-              @click.stop="openVersions(attr)"
             />
             <i
               class="bi bi-trash"
@@ -80,9 +74,6 @@
             <button class="btn-small" @click="saveEdit">
               <i class="bi bi-check-lg" /> Save
             </button>
-            <button class="btn-small secondary" @click="saveVersion">
-              <i class="bi bi-bookmark-plus" /> Save Version
-            </button>
             <button class="btn-small secondary" @click="cancelEdit">
               Cancel
             </button>
@@ -90,61 +81,6 @@
         </div>
       </div>
     </template>
-
-    <!-- Versions Dialog -->
-    <dialog :open="versionsAttr !== null">
-      <article>
-        <header>
-          <h3>Version History - {{ versionsAttr?.title }}</h3>
-          <button
-            class="close-btn"
-            aria-label="Close"
-            @click="versionsAttr = null"
-          >
-            <i class="bi bi-x-lg" />
-          </button>
-        </header>
-        <section>
-          <div v-if="versionsLoading" class="loading-indicator" />
-          <template v-else>
-            <div v-if="selectedVersion" class="version-view">
-              <button class="secondary" @click="selectedVersion = null">
-                <i class="bi bi-arrow-left" /> Back to list
-              </button>
-              <h4>
-                {{ selectedVersion.title }} (v{{ selectedVersion.version }})
-              </h4>
-              <div class="version-content" v-media-images v-html="renderedVersionContent" />
-            </div>
-            <template v-else>
-              <table v-if="versions.length > 0">
-                <thead>
-                  <tr>
-                    <th>Version</th>
-                    <th>Title</th>
-                    <th>Date</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="v in versions" :key="v.version">
-                    <td>v{{ v.version }}</td>
-                    <td>{{ v.title }}</td>
-                    <td>{{ formatDate(v.dateCreated) }}</td>
-                    <td>
-                      <button class="small" @click="viewVersion(v)">
-                        <i class="bi bi-eye" />
-                      </button>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-              <p v-else class="empty-hint">No versions saved yet.</p>
-            </template>
-          </template>
-        </section>
-      </article>
-    </dialog>
 
     <!-- Delete Confirmation -->
     <dialog :open="deleteTarget !== null">
@@ -197,10 +133,6 @@ const editTitle = ref("");
 const editContent = ref("");
 const editTab = ref("edit");
 
-const versionsAttr = ref(null);
-const versionsLoading = ref(false);
-const versions = ref([]);
-const selectedVersion = ref(null);
 const deleteTarget = ref(null);
 
 const attributes = computed(() => attrStore.attributes);
@@ -212,19 +144,6 @@ const renderedPreview = computed(() => {
     resolveMediaSlug: mediaStore.getMediaBySlug,
   });
 });
-
-const renderedVersionContent = computed(() => {
-  if (!selectedVersion.value?.content) return "";
-  return renderMarkdown(selectedVersion.value.content, {
-    bookId: props.bookId,
-    resolveMediaSlug: mediaStore.getMediaBySlug,
-  });
-});
-
-function formatDate(dateStr) {
-  if (!dateStr) return "";
-  return new Date(dateStr).toLocaleString();
-}
 
 function currentAttr() {
   if (!editingId.value) return null;
@@ -376,22 +295,6 @@ async function saveEdit() {
   }
 }
 
-async function saveVersion() {
-  if (!editingId.value) return;
-  // Save current content first, then create version
-  try {
-    await attrStore.update(editingId.value, {
-      title: editTitle.value,
-      content: editContent.value,
-    });
-    await attrStore.createVersion(editingId.value);
-    clearDraft("attribute", editingId.value);
-    toastsStore.success("Attribute version saved.");
-  } catch {
-    toastsStore.error("Could not save attribute version.");
-  }
-}
-
 function confirmDelete(attr) {
   deleteTarget.value = attr;
 }
@@ -404,30 +307,6 @@ async function deleteAttribute() {
     deleteTarget.value = null;
   } catch {
     toastsStore.error("Could not delete attribute.");
-  }
-}
-
-async function openVersions(attr) {
-  versionsAttr.value = attr;
-  versionsLoading.value = true;
-  selectedVersion.value = null;
-  try {
-    versions.value = await attrStore.fetchVersions(attr.id);
-  } catch {
-    versions.value = [];
-  } finally {
-    versionsLoading.value = false;
-  }
-}
-
-async function viewVersion(v) {
-  try {
-    selectedVersion.value = await attrStore.fetchVersion(
-      versionsAttr.value.id,
-      v.version,
-    );
-  } catch {
-    selectedVersion.value = v;
   }
 }
 
@@ -496,7 +375,7 @@ watch(
 
 .attr-collapsed {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto;
   align-items: center;
   gap: var(--space-sm);
   padding: var(--space-xs) var(--space-sm);
@@ -513,11 +392,6 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.attr-meta {
-  font-size: var(--text-sm);
-  opacity: 0.5;
 }
 
 .attr-actions {
@@ -606,36 +480,10 @@ watch(
   font-size: var(--text-sm);
 }
 
-.version-view {
-  display: grid;
-  gap: var(--space-sm);
-}
-
-.version-content {
-  padding: var(--space-sm);
-  border: 1px solid var(--pico-muted-border-color, #444);
-  border-radius: var(--radius-sm, 4px);
-  overflow-y: auto;
-  max-height: 60vh;
-}
-
-button.small {
-  padding: 0.2em 0.5em;
-  font-size: var(--text-base);
-}
-
 /* Mobile: always show actions (no hover on touch) */
 @media (max-width: 768px) {
   .attr-actions {
     opacity: 1;
-  }
-
-  .attr-collapsed {
-    grid-template-columns: 1fr auto;
-  }
-
-  .attr-meta {
-    display: none;
   }
 
   .attr-edit-actions {

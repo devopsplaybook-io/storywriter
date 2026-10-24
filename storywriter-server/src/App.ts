@@ -32,6 +32,7 @@ import { LlmRoutes } from "./analysis/LlmRoutes";
 import { MediaRoutes } from "./media/MediaRoutes";
 import { LegacyMetadataMigrate } from "./utils/LegacyMetadata";
 import { RegisterSecurityHeaders } from "./SecurityHeaders";
+import { StaticCacheControl } from "./StaticFiles";
 
 import fastifyCompress from "@fastify/compress";
 import fastifyMultipart from "@fastify/multipart";
@@ -173,11 +174,10 @@ Promise.resolve().then(async () => {
   fastify.register(fastifyStatic, {
     root: path.join(__dirname, "../web"),
     prefix: "/",
-    maxAge: "1d",
     etag: true,
     lastModified: true,
-    immutable: true,
-    cacheControl: true,
+    cacheControl: false,
+    setHeaders: StaticCacheControl,
   });
 
   fastify.setNotFoundHandler((request, reply) => {
@@ -186,6 +186,7 @@ Promise.resolve().then(async () => {
       !request.raw.url.startsWith("/api/") &&
       !path.extname(request.raw.url)
     ) {
+      reply.header("Cache-Control", "no-cache");
       return (reply as any).sendFile("index.html");
     }
     reply.status(404).send({ error: "Not Found" });
