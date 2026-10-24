@@ -17,6 +17,7 @@ function ruleMatches(rule: RuntimeCachingRule, url: string): boolean {
 
 describe("nuxt.config service worker runtime caching", () => {
   let runtimeCaching: RuntimeCachingRule[];
+  let appHead: { charset?: string };
 
   beforeAll(async () => {
     // nuxt.config.ts calls the Nuxt global; stub it for the plain import
@@ -24,9 +25,15 @@ describe("nuxt.config service worker runtime caching", () => {
       config: unknown,
     ) => config;
     const config = (await import("../nuxt.config")).default as {
+      app: { head: { charset?: string } };
       pwa: { workbox: { runtimeCaching: RuntimeCachingRule[] } };
     };
     runtimeCaching = config.pwa?.workbox?.runtimeCaching ?? [];
+    appHead = config.app?.head ?? {};
+  });
+
+  it("declares the utf-8 charset (matching the HTTP response)", () => {
+    expect(appHead.charset).toBe("utf-8");
   });
 
   it("never caches API responses (including private media)", () => {

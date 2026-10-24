@@ -4,7 +4,7 @@
       <header>
         <hgroup>
           <h1>Storywriter</h1>
-          <p v-if="isSetup">Create your admin account to get started</p>
+          <p v-if="needsSetup">Create your admin account to get started</p>
           <p v-else>Sign in to your account</p>
         </hgroup>
       </header>
@@ -34,7 +34,7 @@
           />
         </label>
 
-        <label v-if="isSetup">
+        <label v-if="needsSetup">
           Confirm Password
           <input
             v-model="passwordConfirm"
@@ -47,7 +47,7 @@
 
         <footer>
           <button type="submit" :aria-busy="loading">
-            {{ isSetup ? "Create Admin Account" : "Login" }}
+            {{ needsSetup ? "Create Admin Account" : "Login" }}
           </button>
         </footer>
       </form>
@@ -65,7 +65,7 @@ const password = ref("");
 const passwordConfirm = ref("");
 const loading = ref(false);
 const error = ref("");
-const isSetup = ref(false);
+const needsSetup = ref(false);
 
 onMounted(async () => {
   await authStore.init();
@@ -74,10 +74,12 @@ onMounted(async () => {
     return;
   }
   try {
-    const res = await api.get("/status/initialization");
-    isSetup.value = !res.data.initialized;
-  } catch {
-    isSetup.value = false;
+    const res = await api.get("/users/status/initialization");
+    needsSetup.value = !res.data.initialized;
+  } catch (e) {
+    console.error("Could not determine setup state", e);
+    error.value =
+      "Could not determine setup state. Check your connection and reload.";
   }
 });
 
@@ -85,7 +87,7 @@ async function handleSubmit() {
   error.value = "";
   loading.value = true;
   try {
-    if (isSetup.value) {
+    if (needsSetup.value) {
       if (password.value !== passwordConfirm.value) {
         error.value = "Passwords do not match";
         loading.value = false;

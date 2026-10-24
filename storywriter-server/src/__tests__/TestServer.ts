@@ -28,6 +28,7 @@ import { BookAnalysisInit } from "../analysis/BookAnalysis";
 import { LlmClientInit } from "../analysis/LlmClient";
 import { MediaRoutes } from "../media/MediaRoutes";
 import { RegisterSecurityHeaders } from "../SecurityHeaders";
+import { StaticCacheControl } from "../StaticFiles";
 
 const SQL_DIR = path.join(__dirname, "../../sql/sqlite");
 
@@ -134,17 +135,42 @@ export class TestServer {
       limits: { fileSize: 10 * 1024 * 1024 },
     });
     // Static web root with an index page, like App.ts serves the SPA; this
-    // lets the security-headers spec assert headers on non-API responses too.
+    // lets the security-headers and static-caching specs assert headers on
+    // non-API responses too. Same per-file cache policy as App.ts.
     const webRoot = path.join(this.dataDir, "web");
-    await fs.ensureDir(webRoot);
+    await fs.ensureDir(path.join(webRoot, "_nuxt"));
+    await fs.ensureDir(path.join(webRoot, "images"));
     await fs.writeFile(
       path.join(webRoot, "index.html"),
       "<!DOCTYPE html><html><body>storywriter test</body></html>",
+    );
+    await fs.writeFile(
+      path.join(webRoot, "_nuxt", "entry.abc123.js"),
+      "// hashed build asset",
+    );
+    await fs.writeFile(
+      path.join(webRoot, "images", "logo.svg"),
+      "<svg xmlns=\"http://www.w3.org/2000/svg\" />",
     );
     await this.app.register(fastifyStatic, {
       root: webRoot,
       prefix: "/",
       serve: true,
+      etag: true,
+      cacheControl: false,
+      setHeaders: StaticCacheControl,
+    });
+    // SPA fallback, like App.ts: extensionless non-API routes get index.html
+    this.app.setNotFoundHandler((request, reply) => {
+      if (
+        request.raw.url &&
+        !request.raw.url.startsWith("/api/") &&
+        !path.extname(request.raw.url)
+      ) {
+        reply.header("Cache-Control", "no-cache");
+        return (reply as any).sendFile("index.html");
+      }
+      reply.status(404).send({ error: "Not Found" });
     });
     this.app.get("/api/status", async () => ({ started: true }));
     await this.app.register(new UsersRoutes().getRoutes, {

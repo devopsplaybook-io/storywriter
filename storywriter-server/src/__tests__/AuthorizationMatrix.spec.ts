@@ -289,6 +289,43 @@ describe("Authorization matrix", () => {
     });
   });
 
+  describe("book create/update responses", () => {
+    it("includes the caller's permission in create and update responses", async () => {
+      const created = await server.inject("POST", "/api/books", owner.token, {
+        name: "Permission Response Book",
+      });
+      expect(created.statusCode).toBe(201);
+      expect(JSON.parse(created.body).permission).toBe("owner");
+
+      const adminCreated = await server.inject(
+        "POST",
+        "/api/books",
+        admin.token,
+        { name: "Admin Created Book" },
+      );
+      expect(adminCreated.statusCode).toBe(201);
+      expect(JSON.parse(adminCreated.body).permission).toBe("admin");
+
+      const ownerUpdate = await server.inject(
+        "PUT",
+        `/api/books/${bookA.id}`,
+        owner.token,
+        { description: "updated by owner" },
+      );
+      expect(ownerUpdate.statusCode).toBe(200);
+      expect(JSON.parse(ownerUpdate.body).permission).toBe("owner");
+
+      const writerUpdate = await server.inject(
+        "PUT",
+        `/api/books/${bookA.id}`,
+        writer.token,
+        { description: "updated by writer" },
+      );
+      expect(writerUpdate.statusCode).toBe(200);
+      expect(JSON.parse(writerUpdate.body).permission).toBe("write");
+    });
+  });
+
   describe("book deletion", () => {
     it("rejects writers and allows the owner and admins", async () => {
       const throwaway = await server.createBook(owner.token, "Throwaway 1");
@@ -539,8 +576,16 @@ describe("Authorization matrix", () => {
       return { rootA, parent: parentBody, child: JSON.parse(child.body) };
     }
 
-    it("copies a subtree inside the same book", async () => {
+    it("copies a subtree inside the same book without AI notes", async () => {
       const { rootA, parent } = await createCopyFixture();
+      const analysisSet = await server.inject(
+        "PUT",
+        `/api/sections/${parent.id}`,
+        owner.token,
+        { analysis: "AI notes that must not be copied" },
+      );
+      expect(analysisSet.statusCode).toBe(200);
+
       const res = await server.inject(
         "POST",
         `/api/sections/${parent.id}/copy`,
@@ -551,6 +596,9 @@ describe("Authorization matrix", () => {
       const copy = JSON.parse(res.body);
       expect(copy.title).toBe("Part (copy)");
       expect(copy.bookId).toBe(bookA.id);
+      // Duplicated sections start with empty AI notes (regenerable content
+      // is not copied — see SECTIONS.md).
+      expect(copy.analysis).toBe("");
 
       const children = await server.inject(
         "GET",

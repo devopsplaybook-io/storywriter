@@ -6,7 +6,6 @@ export interface BookAttribute {
   bookId: string;
   title: string;
   content: string;
-  version: number;
   dateCreated: string;
   dateUpdated: string;
 }
@@ -45,20 +44,6 @@ export const useBookAttributesStore = defineStore("bookAttributes", {
       await api.delete(`/book-attributes/${id}`);
       this.attributes = this.attributes.filter((a) => a.id !== id);
       if (this.currentAttribute?.id === id) this.currentAttribute = null;
-    },
-
-    async createVersion(id: string) {
-      await api.post(`/book-attributes/${id}/version`);
-    },
-
-    async fetchVersions(id: string) {
-      const res = await api.get(`/book-attributes/${id}/versions`);
-      return res.data;
-    },
-
-    async fetchVersion(id: string, version: number) {
-      const res = await api.get(`/book-attributes/${id}/versions/${version}`);
-      return res.data;
     },
   },
 });

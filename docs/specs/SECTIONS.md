@@ -9,7 +9,6 @@ Sections are the structural building blocks of a book. They form a hierarchical 
 | [x] Title    | The section title                             |
 | [x] Content  | The main writing content (markdown supported) |
 | [x] Analysis | AI analysis notes (editable in the AI Notes tab) |
-| [x] Version  | Integer version counter, incremented on save  |
 | [x] Parent   | The parent section (null for root)            |
 | [x] Order    | Sort order among siblings                     |
 | [x] Type     | Section type: `text`, `container`, or `media` |
@@ -64,12 +63,8 @@ Sections are the structural building blocks of a book. They form a hierarchical 
 
 ## Versioning
 
-- [x] Each section maintains a version history.
-- [x] A **version snapshot** captures the title, content, type, mediaId, and caption at a point in time.
-- [x] Users can **save a version** manually (bookmark-style).
-- [x] Users can **browse version history** via a dialog showing a table of all saved versions.
-- [x] Each version can be viewed to see the content as it was at that point.
-- [x] Versions are stored in the `section_versions` table.
+- [x] Per-section version history is **removed**: migration `init-0002` dropped the `section_versions` table and the section `version` counter, and the UI no longer offers per-section snapshots.
+- [x] Point-in-time snapshots are taken at the **book level** instead (see BOOKS.md).
 
 ## Editing
 
@@ -107,4 +102,4 @@ Sections are the structural building blocks of a book. They form a hierarchical 
 
 _API: `PUT /api/sections/:id` accepts `analysis`; `POST /api/sections/:id/analysis` regenerates the AI notes; `POST /api/sections/:id/ai-action` runs an AI action (see ANALYSIS.md)._
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-23_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-24_

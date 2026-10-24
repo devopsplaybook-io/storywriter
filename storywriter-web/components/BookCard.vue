@@ -10,6 +10,7 @@
     <footer>
       <div class="actions">
         <i
+          v-if="canManageAccess(book.permission)"
           class="bi bi-people"
           title="Manage access"
           @click.stop="$emit('access')"
@@ -19,14 +20,26 @@
           title="Export"
           @click.stop="$emit('export')"
         />
-        <i class="bi bi-pencil" title="Edit" @click.stop="$emit('edit')" />
-        <i class="bi bi-trash" title="Delete" @click.stop="$emit('delete')" />
+        <i
+          v-if="canEditBook(book.permission)"
+          class="bi bi-pencil"
+          title="Edit"
+          @click.stop="$emit('edit')"
+        />
+        <i
+          v-if="canDeleteBook(book.permission)"
+          class="bi bi-trash"
+          title="Delete"
+          @click.stop="$emit('delete')"
+        />
       </div>
     </footer>
   </article>
 </template>
 
 <script setup>
+import { canDeleteBook, canEditBook, canManageAccess } from "../utils/permissions";
+
 defineProps({
   book: { type: Object, required: true },
 });

@@ -147,7 +147,8 @@ export class BooksRoutes {
       // Give creator write access
       await BooksDataSetAccess(book.id, userSession.userId, "write");
 
-      return res.status(201).send(book.toTransportJson());
+      const permission = await BookAccessGet(req, book, userSession);
+      return res.status(201).send({ ...book.toTransportJson(), permission });
     });
 
     // ==================== UPDATE BOOK ====================
@@ -176,7 +177,8 @@ export class BooksRoutes {
           Math.floor(Number(req.body.writingGoal) || 0),
         );
       await BooksDataUpdate(book);
-      return res.status(200).send(book.toTransportJson());
+      const permission = await BookAccessGet(req, book, userSession);
+      return res.status(200).send({ ...book.toTransportJson(), permission });
     });
 
     // ==================== DELETE BOOK ====================
