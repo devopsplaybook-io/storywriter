@@ -116,7 +116,13 @@ export class MediaRoutes {
         "Content-Disposition",
         `${INLINE_MIME_TYPES.includes(media.mimeType) ? "inline" : "attachment"}; filename="${(media.originalFilename || media.filename).replace(/"/g, "")}"`,
       );
-      return res.sendFile(media.filename, path.join(mediaDir, id));
+      // Private per-user content: never stored by browsers, proxies or the
+      // service worker. sendFile would otherwise stamp its own Cache-Control
+      // (public, max-age=...) over this one.
+      res.header("Cache-Control", "private, no-store");
+      return res.sendFile(media.filename, path.join(mediaDir, id), {
+        cacheControl: false,
+      });
     });
 
     // ==================== UPLOAD MEDIA ====================

@@ -7,7 +7,9 @@ It is installable on mobile and desktop devices; the app shell (interface, style
 
 - [x] **Responsive**: Adapts to all screen sizes from mobile to desktop.
 - [x] **PWA**: Installable, configured via `@vite-pwa/nuxt`.
-- [x] **Offline app shell**: The service worker precaches the app shell (HTML/JS/CSS and icon images); static assets and book media files are cached at runtime; API data responses are never cached so saved content stays honest and fresh.
+- [x] **Offline app shell**: The service worker precaches the app shell (HTML/JS/CSS and icon images) and caches only hashed build assets (`/_nuxt/...`) at runtime; private media and all API responses are never cached by the service worker so saved content stays honest and private.
+- [x] **Markdown sanitization**: All rendered markdown (sections, attributes, AI content) is sanitized with DOMPurify before injection, so stored HTML can never execute script; a strict Content-Security-Policy is served by the API server.
+- [x] **Media display**: Private media is fetched as blobs (Authorization header) and displayed via short-lived in-memory object URLs — never via token-bearing URLs, and never stored by the service worker.
 - [x] **Offline banner**: An unobtrusive banner tells the user when the browser is offline and what still works.
 - [x] **PNG app icons**: 192/512 `any` plus 192/512 `maskable` PNG icons so installation works across platforms (SVG icon kept for browsers that prefer it).
 - [x] **Toast notifications**: A small global toast system surfaces save and action errors (and successes) instead of silent failures.
@@ -94,4 +96,4 @@ The book detail page uses a **responsive split-pane layout** following the feedw
 - [x] **Markdown body**: `.markdown-body` class for rendered markdown content.
 - [x] **Design tokens**: CSS custom properties for spacing (`--space-*`), radius (`--radius-*`), typography (`--text-*`), transitions (`--transition-*`), and shadows (`--shadow-*`).
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-17_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-24_

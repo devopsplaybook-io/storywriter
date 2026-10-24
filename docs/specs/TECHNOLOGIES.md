@@ -30,7 +30,8 @@
 - [x] **Layout preference**: CSS Grid strongly preferred for layout; Flexbox for simple one-dimensional alignment
 - [x] **PWA**: Enabled via `@vite-pwa/nuxt`, manifest configured in `nuxt.config.ts`
 - [x] **HTTP client**: Axios for HTTP requests to the backend API
-- [x] **Markdown rendering**: `marked` library for markdown preview in editors
+- [x] **Markdown rendering**: `marked` library, always sanitized with **DOMPurify** (allow-list) before HTML injection
+- [x] **Browser e2e**: Playwright (chromium) against the assembled all-in-one app (`npm run test` runs unit + e2e)
 - [x] **Design Language**: CSS custom properties for spacing, radius, transitions, typography (defined in `assets/css/main.css`)
 - [x] **Theme**: Light/dark theme toggle with system preference detection; choice saved to localStorage
 
@@ -59,4 +60,4 @@
 - [x] Used for book analysis feature (`src/analysis/`)
 - [x] Retry with exponential backoff; results cached to disk
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-09-21_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-24_

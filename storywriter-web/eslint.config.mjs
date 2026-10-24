@@ -5,7 +5,14 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: [".output/**", ".nuxt/**", "node_modules/**", "dist/**"],
+    ignores: [
+      ".output/**",
+      ".nuxt/**",
+      "node_modules/**",
+      "dist/**",
+      "test-results/**",
+      "playwright-report/**",
+    ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.strict,

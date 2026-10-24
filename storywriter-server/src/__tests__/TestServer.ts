@@ -27,6 +27,7 @@ import { BookAnalysisRoutes } from "../analysis/BookAnalysisRoutes";
 import { BookAnalysisInit } from "../analysis/BookAnalysis";
 import { LlmClientInit } from "../analysis/LlmClient";
 import { MediaRoutes } from "../media/MediaRoutes";
+import { RegisterSecurityHeaders } from "../SecurityHeaders";
 
 const SQL_DIR = path.join(__dirname, "../../sql/sqlite");
 
@@ -128,11 +129,24 @@ export class TestServer {
     span.end();
 
     this.app = Fastify({ logger: false });
+    RegisterSecurityHeaders(this.app);
     await this.app.register(fastifyMultipart, {
       limits: { fileSize: 10 * 1024 * 1024 },
     });
-    // reply.sendFile support for media routes, without serving a web root
-    await this.app.register(fastifyStatic, { root: this.dataDir, serve: false });
+    // Static web root with an index page, like App.ts serves the SPA; this
+    // lets the security-headers spec assert headers on non-API responses too.
+    const webRoot = path.join(this.dataDir, "web");
+    await fs.ensureDir(webRoot);
+    await fs.writeFile(
+      path.join(webRoot, "index.html"),
+      "<!DOCTYPE html><html><body>storywriter test</body></html>",
+    );
+    await this.app.register(fastifyStatic, {
+      root: webRoot,
+      prefix: "/",
+      serve: true,
+    });
+    this.app.get("/api/status", async () => ({ started: true }));
     await this.app.register(new UsersRoutes().getRoutes, {
       prefix: "/api/users",
     });

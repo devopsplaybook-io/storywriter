@@ -78,19 +78,19 @@
         <template v-if="!showRaw">
           <section v-if="analysisResult.summary" class="analysis-section">
             <h4>Summary</h4>
-            <div v-html="renderMarkdown(analysisResult.summary)" />
+            <div v-media-images v-html="renderMarkdown(analysisResult.summary)" />
           </section>
           <section v-if="analysisResult.strengths" class="analysis-section">
             <h4>Strengths</h4>
-            <div v-html="renderMarkdown(analysisResult.strengths)" />
+            <div v-media-images v-html="renderMarkdown(analysisResult.strengths)" />
           </section>
           <section v-if="analysisResult.improvements" class="analysis-section">
             <h4>Areas for Improvement</h4>
-            <div v-html="renderMarkdown(analysisResult.improvements)" />
+            <div v-media-images v-html="renderMarkdown(analysisResult.improvements)" />
           </section>
           <section v-if="analysisResult.suggestions" class="analysis-section">
             <h4>Suggestions</h4>
-            <div v-html="renderMarkdown(analysisResult.suggestions)" />
+            <div v-media-images v-html="renderMarkdown(analysisResult.suggestions)" />
           </section>
           <p
             v-if="
@@ -125,9 +125,9 @@
 </template>
 
 <script setup>
-import { marked } from "marked";
 import { useBooksStore } from "../stores/books";
 import { useLlmStore } from "../stores/llm";
+import { renderMarkdown } from "../utils/safeMarkdown";
 
 const props = defineProps({
   bookId: {
@@ -147,11 +147,6 @@ const analysisResult = ref(null);
 const generating = ref(false);
 const error = ref(null);
 const showRaw = ref(false);
-
-function renderMarkdown(text) {
-  if (!text) return "";
-  return marked(text);
-}
 
 async function loadCachedAnalysis() {
   try {

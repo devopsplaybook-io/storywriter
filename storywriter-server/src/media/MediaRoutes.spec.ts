@@ -93,6 +93,7 @@ describe("Media routes", () => {
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
     expect(res.headers["content-disposition"]).toContain("inline");
     expect(res.headers["content-type"]).toBe("image/jpeg");
+    expect(res.headers["cache-control"]).toBe("private, no-store");
   });
 
   it("serves SVG as an attachment with nosniff", async () => {
@@ -113,6 +114,25 @@ describe("Media routes", () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
     expect(res.headers["content-disposition"]).toContain("attachment");
+  });
+
+  it("ignores a token passed as a query parameter (Authorization header only)", async () => {
+    const upload = await server.uploadMedia(
+      user.token,
+      bookId,
+      "query-token.png",
+      PNG_BYTES,
+      "image/png",
+    );
+    const media = JSON.parse(upload.body);
+    // A valid JWT in the URL must not authenticate the request: <img> tags
+    // cannot send headers, and tokens in URLs leak into caches and logs.
+    const res = await server.inject(
+      "GET",
+      `/api/books/${bookId}/media/${media.id}/file?token=${encodeURIComponent(user.token)}`,
+      undefined,
+    );
+    expect(res.statusCode).toBe(403);
   });
 
   it("returns 415 for stored media whose MIME type is not allow-listed", async () => {

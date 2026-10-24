@@ -14,4 +14,7 @@ storywriter-proxy/bin/
 /docs/dev/data
 storywriter-web/.nuxt
 storywriter-web/.output
+storywriter-web/test-results
+storywriter-web/playwright-report
+storywriter-server/web
 docs/dev/tmp/
