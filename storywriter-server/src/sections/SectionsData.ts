@@ -12,6 +12,20 @@ const DELETE_CHUNK_SIZE = 500;
 const SECTION_COLUMNS =
   '"id", "bookId", "parentId", "type", "title", "content", "analysis", "mediaId", "caption", "orderIndex", "dateCreated", "dateUpdated"';
 
+/**
+ * Thrown by SectionsDataUpdate when an expected revision was given and the
+ * section was modified by someone else in the meantime (no rows updated).
+ */
+export class SectionsConflictError extends Error {
+  public section: Section;
+
+  constructor(section: Section) {
+    super("Section was modified by someone else");
+    this.name = "SectionsConflictError";
+    this.section = section;
+  }
+}
+
 // ==================== Section CRUD ====================
 
 export async function SectionsDataGet(id: string): Promise<Section> {
@@ -102,18 +116,53 @@ export async function SectionsDataAdd(section: Section): Promise<void> {
   ]);
 }
 
-export async function SectionsDataUpdate(section: Section): Promise<void> {
+/**
+ * Update a section's fields and bump its revision. When `expectedRevision`
+ * is given, the update only applies while the stored revision still matches;
+ * a stale write throws SectionsConflictError carrying the current section.
+ */
+export async function SectionsDataUpdate(
+  section: Section,
+  expectedRevision?: number,
+): Promise<void> {
   section.dateUpdated = new Date().toISOString();
-  await DbUtilsExecSQL(SQL_QUERIES.UPDATE_SECTION[DbUtilsGetType()], [
-    section.type,
-    section.title,
-    section.content,
-    section.analysis,
-    section.mediaId,
-    section.caption,
-    section.dateUpdated,
-    section.id,
-  ]);
+  const queries = expectedRevision === undefined
+    ? SQL_QUERIES.UPDATE_SECTION
+    : SQL_QUERIES.UPDATE_SECTION_IF_REVISION;
+  const params =
+    expectedRevision === undefined
+      ? [
+          section.type,
+          section.title,
+          section.content,
+          section.analysis,
+          section.mediaId,
+          section.caption,
+          section.dateUpdated,
+          section.id,
+        ]
+      : [
+          section.type,
+          section.title,
+          section.content,
+          section.analysis,
+          section.mediaId,
+          section.caption,
+          section.dateUpdated,
+          section.id,
+          expectedRevision,
+        ];
+  const affected = await DbUtilsExecSQL(queries[DbUtilsGetType()], params);
+  if (expectedRevision !== undefined && affected === 0) {
+    const current = await SectionsDataGet(section.id);
+    if (current) {
+      throw new SectionsConflictError(current);
+    }
+    throw new SectionsConflictError(section);
+  }
+  // Keep the caller's object in sync with the bumped DB revision so the
+  // response reports the revision the row now carries.
+  section.revision = (expectedRevision ?? section.revision) + 1;
 }
 
 export async function SectionsDataUpdateOrder(
@@ -310,9 +359,15 @@ const SQL_QUERIES = {
   },
   UPDATE_SECTION: {
     postgres:
-      'UPDATE sections SET "type" = $1, "title" = $2, "content" = $3, "analysis" = $4, "mediaId" = $5, "caption" = $6, "dateUpdated" = $7 WHERE "id" = $8',
+      'UPDATE sections SET "type" = $1, "title" = $2, "content" = $3, "analysis" = $4, "mediaId" = $5, "caption" = $6, "revision" = "revision" + 1, "dateUpdated" = $7 WHERE "id" = $8',
     sqlite:
-      "UPDATE sections SET type = ?, title = ?, content = ?, analysis = ?, mediaId = ?, caption = ?, dateUpdated = ? WHERE id = ?",
+      "UPDATE sections SET type = ?, title = ?, content = ?, analysis = ?, mediaId = ?, caption = ?, revision = revision + 1, dateUpdated = ? WHERE id = ?",
+  },
+  UPDATE_SECTION_IF_REVISION: {
+    postgres:
+      'UPDATE sections SET "type" = $1, "title" = $2, "content" = $3, "analysis" = $4, "mediaId" = $5, "caption" = $6, "revision" = "revision" + 1, "dateUpdated" = $7 WHERE "id" = $8 AND "revision" = $9',
+    sqlite:
+      "UPDATE sections SET type = ?, title = ?, content = ?, analysis = ?, mediaId = ?, caption = ?, revision = revision + 1, dateUpdated = ? WHERE id = ? AND revision = ?",
   },
   UPDATE_SECTION_ORDER: {
     postgres: 'UPDATE sections SET "orderIndex" = $1 WHERE "id" = $2',

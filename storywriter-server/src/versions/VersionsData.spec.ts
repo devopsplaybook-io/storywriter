@@ -6,6 +6,7 @@ import {
 } from "../__tests__/TestServer";
 import {
   VersionsDataCreate,
+  VersionsDataGet,
   VersionsDataListByBook,
 } from "../versions/VersionsData";
 
@@ -121,8 +122,12 @@ describe("Versions", () => {
   });
 
   it("restores sections, AI notes, properties, values and media after edits and deletions", async () => {
-    const versions = await VersionsDataListByBook(bookId);
-    const version = versions[0];
+    const listed = await VersionsDataListByBook(bookId);
+    // The list is metadata-only: the transport JSON carries no snapshot
+    // payload, but a size.
+    expect(typeof listed[0].size).toBe("number");
+    expect(listed[0].toTransportJson().snapshot).toBeUndefined();
+    const version = await VersionsDataGet(listed[0].id);
     const before = JSON.parse(version.snapshot);
     const media = before.mediaMeta[0];
 
@@ -211,7 +216,8 @@ describe("Versions", () => {
   });
 
   it("keeps the current properties when restoring a legacy snapshot", async () => {
-    const version = (await VersionsDataListByBook(bookId))[0];
+    const listed = await VersionsDataListByBook(bookId);
+    const version = await VersionsDataGet(listed[0].id);
     const snapshot = JSON.parse(version.snapshot);
     // Simulate a pre-0.12 snapshot: no properties/sectionProperties arrays.
     delete snapshot.properties;

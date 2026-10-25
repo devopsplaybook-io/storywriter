@@ -14,6 +14,7 @@ Sections are the structural building blocks of a book. They form a hierarchical 
 | [x] Type     | Section type: `text`, `container`, or `media` |
 | [x] MediaId  | Reference to attached media (for media type)  |
 | [x] Caption  | Optional caption for media (markdown)         |
+| [x] Revision | Optimistic-concurrency counter, bumped on every update (migration `init-0008`) |
 
 ## Section Content Types
 
@@ -82,6 +83,8 @@ Sections are the structural building blocks of a book. They form a hierarchical 
 - [x] A global **save-status indicator** in the editor header shows unsaved → saving → saved → error.
 - [x] The browser warns before closing or reloading the tab while there is unsaved work (`beforeunload` guard).
 - [x] A local draft buffer (localStorage) keeps in-flight text so it survives a crash, tab close or network loss, and is restored on the next open.
+- [x] **Conflict detection**: `PUT /api/sections/:id` accepts the section's current `revision`; when it no longer matches the server the update is rejected with `409` and the current revision. Requests without a `revision` update unconditionally (backwards compatible for API scripts).
+- [x] The web client sends the stored revision with every save; on a `409` the editor shows an error, keeps the local draft, reloads the book's sections and retries the save on the next autosave tick on top of the fresh state.
 - [x] A **live word count** for the section (markdown stripped) is shown in the editor header and updates per keystroke.
 - [x] The sidebar shows the **running word total for the book**, live between autosave ticks; when a writing goal is set it shows the target, the percentage and a progress bar.
 - [x] **Focus mode** collapses the sidebar, book nav and global header for distraction-free writing (centered measure); toggled via the editor button or Ctrl/Cmd+Shift+F, exits with Escape; an optional typewriter-scrolling preference persists in localStorage.
@@ -100,6 +103,6 @@ Sections are the structural building blocks of a book. They form a hierarchical 
 - [x] Duplicated sections start with **empty AI notes** (regenerable content is not copied).
 - [x] A keyboard-accessible "Move to…" dialog moves a section to any allowed container for touch and screen-reader users.
 
-_API: `PUT /api/sections/:id` accepts `analysis`; `POST /api/sections/:id/analysis` regenerates the AI notes; `POST /api/sections/:id/ai-action` runs an AI action (see ANALYSIS.md)._
+_API: `PUT /api/sections/:id` accepts `analysis` and the optimistic `revision`; `POST /api/sections/:id/analysis` regenerates the AI notes; `POST /api/sections/:id/ai-action` runs an AI action (see ANALYSIS.md)._
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-24_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-25_

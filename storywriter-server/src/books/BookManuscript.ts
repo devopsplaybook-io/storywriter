@@ -1,10 +1,23 @@
 import { ZipArchive } from "archiver";
+import * as fs from "fs-extra";
 import { marked } from "marked";
 import HTMLtoDOCX from "@turbodocx/html-to-docx";
+import { v4 as uuidv4 } from "uuid";
 import { Book } from "../model/Book";
 import { Section } from "../model/Section";
 
 export type ManuscriptInclude = "content" | "full";
+
+/**
+ * Thrown when the book exceeds the configured manuscript export budgets
+ * (content or media size); routes map it to a 413 response.
+ */
+export class ManuscriptTooLargeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ManuscriptTooLargeError";
+  }
+}
 
 export interface ManuscriptOptions {
   include?: ManuscriptInclude;
@@ -365,10 +378,17 @@ function extForMimeType(mimeType: string): string {
   return map[mimeType] || "bin";
 }
 
+/**
+ * Render the EPUB into `<tmpDir>/epub-<uuid>.epub` and resolve with its path.
+ * The archive is written to disk instead of being collected in memory (books
+ * with large media would otherwise be buffered twice over); the caller
+ * streams the file and is responsible for unlinking it.
+ */
 export async function RenderManuscriptEpub(
   compiled: CompiledBook,
   book: Book,
-): Promise<Buffer> {
+  tmpDir: string,
+): Promise<string> {
   const blocks = flatten(compiled);
 
   const epubImages: { path: string; media: ManuscriptMediaFile }[] = [];
@@ -521,12 +541,25 @@ img { max-width: 100%; }
   </rootfiles>
 </container>`;
 
+  await fs.ensureDir(tmpDir);
+  const tmpFile = `${tmpDir}/epub-${uuidv4()}.epub`;
+  const output = fs.createWriteStream(tmpFile);
+
   const archive = new ZipArchive();
-  const chunks: Buffer[] = [];
-  archive.on("data", (chunk: Buffer) => chunks.push(chunk));
-  await new Promise<void>((resolve, reject) => {
-    archive.on("error", reject);
-    archive.on("end", () => resolve());
+  const finished = new Promise<void>((resolve, reject) => {
+    const fail = (err: Error) => {
+      archive.destroy();
+      output.destroy();
+      reject(err);
+    };
+    archive.on("error", fail);
+    output.on("error", fail);
+    output.on("close", () => resolve());
+  });
+
+  archive.pipe(output);
+
+  try {
     // EPUB requires the mimetype entry first and stored uncompressed
     archive.append(Buffer.from("application/epub+zip"), {
       name: "mimetype",
@@ -545,7 +578,12 @@ img { max-width: 100%; }
         name: `OEBPS/${image.path}`,
       });
     }
-    archive.finalize();
-  });
-  return Buffer.concat(chunks);
+    await Promise.all([archive.finalize(), finished]);
+    return tmpFile;
+  } catch (err) {
+    archive.destroy();
+    output.destroy();
+    await fs.remove(tmpFile).catch(() => undefined);
+    throw err;
+  }
 }

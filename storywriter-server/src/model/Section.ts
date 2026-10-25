@@ -20,6 +20,7 @@ export class Section {
     section.mediaId = (json.mediaId as string) || null;
     section.caption = (json.caption as string) || "";
     section.orderIndex = (json.orderIndex as number) || 0;
+    section.revision = (json.revision as number) || 1;
     section.dateCreated =
       (json.dateCreated as string) || new Date().toISOString();
     section.dateUpdated =
@@ -37,6 +38,7 @@ export class Section {
   public mediaId: string | null;
   public caption: string;
   public orderIndex: number;
+  public revision: number;
   public dateCreated: string;
   public dateUpdated: string;
 
@@ -50,6 +52,7 @@ export class Section {
     this.mediaId = null;
     this.caption = "";
     this.orderIndex = 0;
+    this.revision = 1;
     this.dateCreated = new Date().toISOString();
     this.dateUpdated = new Date().toISOString();
   }
@@ -66,6 +69,7 @@ export class Section {
       mediaId: this.mediaId,
       caption: this.caption,
       orderIndex: this.orderIndex,
+      revision: this.revision,
       dateCreated: this.dateCreated,
       dateUpdated: this.dateUpdated,
     };
@@ -83,6 +87,7 @@ export class Section {
       mediaId: this.mediaId,
       caption: this.caption,
       orderIndex: this.orderIndex,
+      revision: this.revision,
       dateCreated: this.dateCreated,
       dateUpdated: this.dateUpdated,
     };

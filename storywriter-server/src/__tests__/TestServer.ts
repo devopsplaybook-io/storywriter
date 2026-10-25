@@ -15,10 +15,10 @@ import {
   DbUtilsSetOTel,
   UsersApiTokensDataSetOTel,
   UsersDataSetOTel,
-  UsersRoutes,
 } from "@devopsplaybook.io/common-utils";
 import { Config } from "../Config";
 import { OTelLogger, OTelSetTracer } from "../OTelContext";
+import { RegisterUsersRoutesWithLoginThrottle } from "../users/LoginThrottle";
 import { BooksRoutes } from "../books/BooksRoutes";
 import { SectionsRoutes } from "../sections/SectionsRoutes";
 import { PropertiesRoutes } from "../properties/PropertiesRoutes";
@@ -110,6 +110,9 @@ export class TestServer {
     await fs.ensureDir(this.config.TMP_DIR);
     this.config.DATABASE_TYPE = "sqlite";
     this.config.JWT_KEY = "test-jwt-key";
+    // Route tests log in several users; the login throttle is exercised
+    // explicitly in the RateLimit spec which lowers this knob.
+    this.config.RATE_LIMIT_LOGIN_MAX = 1000;
     this.config.OPENTELEMETRY_COLLECTOR_HTTP_TRACES = "";
     this.config.OPENTELEMETRY_COLLECTOR_HTTP_METRICS = "";
     this.config.OPENTELEMETRY_COLLECTOR_HTTP_LOGS = "";
@@ -173,9 +176,7 @@ export class TestServer {
       reply.status(404).send({ error: "Not Found" });
     });
     this.app.get("/api/status", async () => ({ started: true }));
-    await this.app.register(new UsersRoutes().getRoutes, {
-      prefix: "/api/users",
-    });
+    await RegisterUsersRoutesWithLoginThrottle(this.app, this.config);
     await this.app.register(
       async (instance) => {
         await new BooksRoutes(this.config).getRoutes(instance);
@@ -184,7 +185,7 @@ export class TestServer {
     );
     await this.app.register(
       async (instance) => {
-        await new SectionsRoutes().getRoutes(instance);
+        await new SectionsRoutes(this.config).getRoutes(instance);
       },
       { prefix: "/api/sections" },
     );
@@ -202,7 +203,7 @@ export class TestServer {
     );
     await this.app.register(
       async (instance) => {
-        await new BookAnalysisRoutes().getRoutes(instance);
+        await new BookAnalysisRoutes(this.config).getRoutes(instance);
       },
       { prefix: "/api/books" },
     );

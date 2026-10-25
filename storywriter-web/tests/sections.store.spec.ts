@@ -34,6 +34,7 @@ function seedSections(store) {
       orderIndex: 0,
       dateCreated: "2026-10-16T00:00:00.000Z",
       dateUpdated: "2026-10-16T00:00:00.000Z",
+      revision: 1,
     },
     {
       id: "s2",
@@ -48,6 +49,7 @@ function seedSections(store) {
       orderIndex: 0,
       dateCreated: "2026-10-16T00:00:00.000Z",
       dateUpdated: "2026-10-16T00:00:00.000Z",
+      revision: 3,
     },
     {
       id: "s3",
@@ -62,6 +64,7 @@ function seedSections(store) {
       orderIndex: 1,
       dateCreated: "2026-10-16T00:00:00.000Z",
       dateUpdated: "2026-10-16T00:00:00.000Z",
+      revision: 2,
     },
   ];
 }
@@ -171,5 +174,59 @@ describe("sections store — AI analysis", () => {
       action: "improve",
       selection: "one two",
     });
+  });
+});
+
+describe("sections store — optimistic revision", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    mockedApi.put.mockReset();
+  });
+
+  it("update sends the stored revision for a known section", async () => {
+    const store = useSectionsStore();
+    seedSections(store);
+    const updated = {
+      ...store.sections[1],
+      content: "one two three four",
+      revision: 4,
+      dateUpdated: "2026-10-17T00:00:00.000Z",
+    };
+    mockedApi.put.mockResolvedValueOnce({ data: updated });
+
+    await store.update("s2", { content: "one two three four" });
+
+    expect(mockedApi.put).toHaveBeenCalledWith("/sections/s2", {
+      revision: 3,
+      content: "one two three four",
+    });
+    expect(store.sections[1].revision).toBe(4);
+    expect(store.sections[1].content).toBe("one two three four");
+  });
+
+  it("update omits revision when the section is unknown locally", async () => {
+    const store = useSectionsStore();
+    mockedApi.put.mockResolvedValueOnce({
+      data: { id: "sx", revision: 1 },
+    });
+
+    await store.update("sx", { title: "Fresh" });
+
+    expect(mockedApi.put).toHaveBeenCalledWith("/sections/sx", {
+      title: "Fresh",
+    });
+  });
+
+  it("update rejects and leaves state unchanged on a 409 conflict", async () => {
+    const store = useSectionsStore();
+    seedSections(store);
+    mockedApi.put.mockRejectedValueOnce({
+      response: { status: 409 },
+    });
+
+    await expect(store.update("s2", { content: "new" })).rejects.toBeDefined();
+
+    expect(store.sections[1].content).toBe("one two three");
+    expect(store.sections[1].revision).toBe(3);
   });
 });

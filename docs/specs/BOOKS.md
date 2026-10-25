@@ -39,6 +39,6 @@ Books are the top-level organizational unit in Storywriter. Each book represents
 - [x] Access grants are stored in the `book_access` table (composite key: bookId + userId).
 - [x] SQLite UPSERT correctly uses 4 `?` parameters; PostgreSQL reuses `$N` numbered parameters.
 - [x] Book list/detail responses include `ownerId` and the caller's `permission` (`admin`/`owner`/`write`/`read`/null).
-- [x] Book version list/detail responses omit the heavy `snapshot`; clients fetch it from the read-checked `GET /api/books/:id/versions/:versionId/snapshot`.
+- [x] Book version **list and metadata responses omit the heavy `snapshot`** (the queries select metadata plus the snapshot `size` only); clients fetch the payload from the read-checked `GET /api/books/:id/versions/:versionId/snapshot` or restore via POST.
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-23_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-25_

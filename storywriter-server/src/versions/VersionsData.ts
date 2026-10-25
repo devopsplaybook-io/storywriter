@@ -43,21 +43,17 @@ export interface BookSnapshot {
   }[];
 }
 
-async function ensureBookVersionsTable(): Promise<void> {
-  try {
-    await DbUtilsExecSQL(SQL_QUERIES.CREATE_TABLE[DbUtilsGetType()], []);
-  } catch {
-    // Table may already exist, ignore
-  }
-}
-
+/**
+ * List the versions of a book with metadata only (no snapshot column, which
+ * holds the whole book): listing 50 versions must not download the book 50
+ * times. Snapshot sizes come back as the `size` field.
+ */
 export async function VersionsDataListByBook(
   bookId: string,
 ): Promise<BookVersion[]> {
-  await ensureBookVersionsTable();
   try {
     const rows = await DbUtilsQuerySQL(
-      SQL_QUERIES.LIST_BY_BOOK[DbUtilsGetType()],
+      SQL_QUERIES.LIST_BY_BOOK_META[DbUtilsGetType()],
       [bookId],
     );
     return rows.map((raw) => BookVersion.fromJson(raw));
@@ -66,11 +62,33 @@ export async function VersionsDataListByBook(
   }
 }
 
+/**
+ * Load one version with its full snapshot (snapshot endpoint, restore).
+ */
 export async function VersionsDataGet(id: string): Promise<BookVersion> {
-  await ensureBookVersionsTable();
   try {
     const rows = await DbUtilsQuerySQL(
       SQL_QUERIES.GET_BY_ID[DbUtilsGetType()],
+      [id],
+    );
+    if (rows.length === 0) {
+      return null;
+    }
+    return BookVersion.fromJson(rows[0]);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Load one version's metadata (no snapshot).
+ */
+export async function VersionsDataGetMeta(
+  id: string,
+): Promise<BookVersion> {
+  try {
+    const rows = await DbUtilsQuerySQL(
+      SQL_QUERIES.GET_BY_ID_META[DbUtilsGetType()],
       [id],
     );
     if (rows.length === 0) {
@@ -97,7 +115,6 @@ export async function VersionsDataCreate(
   note: string,
   config: Config,
 ): Promise<BookVersion> {
-  await ensureBookVersionsTable();
   // Get current max version number
   const maxRow = await DbUtilsQuerySQL(
     SQL_QUERIES.GET_MAX_VERSION[DbUtilsGetType()],
@@ -178,8 +195,9 @@ async function PruneOldVersions(
   bookId: string,
   config: Config,
 ): Promise<void> {
+  // Metadata-only rows are enough: pruning needs ids and version numbers.
   const rows = await DbUtilsQuerySQL(
-    SQL_QUERIES.LIST_BY_BOOK[DbUtilsGetType()],
+    SQL_QUERIES.LIST_BY_BOOK_META[DbUtilsGetType()],
     [bookId],
   );
   const versions = rows.map((raw) => BookVersion.fromJson(raw));
@@ -344,11 +362,17 @@ export async function VersionsDataRestore(
 }
 
 const SQL_QUERIES = {
-  CREATE_TABLE: {
+  LIST_BY_BOOK_META: {
     postgres:
-      'CREATE TABLE IF NOT EXISTS book_versions ("id" VARCHAR(50) PRIMARY KEY, "bookId" VARCHAR(50) NOT NULL, "versionNumber" INTEGER NOT NULL, note TEXT NOT NULL DEFAULT \'\', snapshot TEXT NOT NULL, "dateCreated" VARCHAR(100) NOT NULL, FOREIGN KEY ("bookId") REFERENCES books(id))',
+      'SELECT "id", "bookId", "versionNumber", "note", "dateCreated", LENGTH("snapshot") AS "size" FROM book_versions WHERE "bookId" = $1 ORDER BY "versionNumber" DESC',
     sqlite:
-      "CREATE TABLE IF NOT EXISTS book_versions (id VARCHAR(50) PRIMARY KEY, bookId VARCHAR(50) NOT NULL, versionNumber INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '', snapshot TEXT NOT NULL, dateCreated VARCHAR(100) NOT NULL, FOREIGN KEY (bookId) REFERENCES books(id))",
+      'SELECT id, bookId, versionNumber, note, dateCreated, LENGTH("snapshot") AS size FROM book_versions WHERE bookId = ? ORDER BY versionNumber DESC',
+  },
+  GET_BY_ID_META: {
+    postgres:
+      'SELECT "id", "bookId", "versionNumber", "note", "dateCreated", LENGTH("snapshot") AS "size" FROM book_versions WHERE "id" = $1',
+    sqlite:
+      'SELECT id, bookId, versionNumber, note, dateCreated, LENGTH("snapshot") AS size FROM book_versions WHERE id = ?',
   },
   LIST_BY_BOOK: {
     postgres:
