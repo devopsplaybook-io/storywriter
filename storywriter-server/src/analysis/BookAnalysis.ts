@@ -1,3 +1,4 @@
+import * as crypto from "crypto";
 import * as fs from "fs-extra";
 import * as path from "path";
 import { Config } from "../Config";
@@ -6,8 +7,9 @@ import { SectionsDataListByBook } from "../sections/SectionsData";
 import { BookAttributesDataListByBook } from "../attributes/BookAttributesData";
 import {
   PropertiesDataListByBook,
-  PropertiesDataGetSectionValues,
+  PropertiesDataGetAllSectionValuesForBook,
 } from "../properties/PropertiesData";
+import { MediaDataList } from "../media/MediaData";
 import { callLLMWithRetry } from "./LlmClient";
 
 const logger = console;
@@ -37,6 +39,8 @@ export interface BookAnalysisResult {
   improvements: string;
   suggestions: string;
   rawOutput: string | null;
+  /** Hash of all content-bearing records at generation time. */
+  contentHash?: string;
 }
 
 export async function BookAnalysisGetCached(
@@ -57,8 +61,10 @@ export async function BookAnalysisGetCached(
 }
 
 /**
- * A cached report is stale when any section was modified after it was
- * generated, so the reader knows it may no longer reflect the book.
+ * A cached report is stale when any content-bearing record (book metadata,
+ * sections, attributes, properties, property values, media) changed since it
+ * was generated. The comparison is a content hash; reports cached before the
+ * hash existed fall back to the section dateUpdated comparison.
  */
 export async function BookAnalysisIsStale(
   bookId: string,
@@ -67,6 +73,11 @@ export async function BookAnalysisIsStale(
   if (!cached || !cached.generatedAt) {
     return false;
   }
+  if (cached.contentHash) {
+    const currentHash = await BookAnalysisComputeContentHash(bookId);
+    return currentHash !== cached.contentHash;
+  }
+  // Legacy cache without a content hash
   const generatedAt = Date.parse(cached.generatedAt);
   if (Number.isNaN(generatedAt)) {
     return false;
@@ -78,11 +89,114 @@ export async function BookAnalysisIsStale(
   });
 }
 
+// ── Content hash ──────────────────────────────────────────────────────────────
+
+/**
+ * Gather every content-bearing record of a book in one bulk query per table.
+ * The shape is canonical (fixed fields, sorted keys when hashed) so equal
+ * content always produces the same hash.
+ */
+export async function BookAnalysisCollectContent(
+  bookId: string,
+): Promise<Record<string, unknown>> {
+  const book = await BooksDataGet(bookId);
+  if (!book) {
+    throw new Error(`Book not found: ${bookId}`);
+  }
+  const sections = await SectionsDataListByBook(bookId);
+  const attributes = await BookAttributesDataListByBook(bookId);
+  const properties = await PropertiesDataListByBook(bookId);
+  const sectionPropertyValues = await PropertiesDataGetAllSectionValuesForBook(
+    bookId,
+  );
+  const mediaItems = await MediaDataList(bookId);
+
+  return {
+    book: {
+      name: book.name,
+      description: book.description,
+      writingGoal: book.writingGoal,
+    },
+    sections: sections
+      .map((s) => ({
+        id: s.id,
+        parentId: s.parentId,
+        type: s.type,
+        title: s.title,
+        content: s.content,
+        analysis: s.analysis,
+        mediaId: s.mediaId,
+        caption: s.caption,
+        orderIndex: s.orderIndex,
+        dateUpdated: s.dateUpdated,
+      }))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+    attributes: attributes
+      .map((a) => ({
+        id: a.id,
+        title: a.title,
+        content: a.content,
+        dateUpdated: a.dateUpdated,
+      }))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+    properties: properties
+      .map((p) => ({
+        id: p.id,
+        name: p.name,
+        type: p.type,
+        options: p.options,
+      }))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+    sectionPropertyValues: sectionPropertyValues
+      .map((v) => ({
+        sectionId: v.sectionId,
+        propertyId: v.propertyId,
+        value: v.value,
+      }))
+      .sort(
+        (a, b) =>
+          (a.sectionId + a.propertyId < b.sectionId + b.propertyId ? -1 : 1),
+      ),
+    media: mediaItems
+      .map((m) => ({
+        id: m.id,
+        slug: m.slug,
+        mimeType: m.mimeType,
+        size: m.size,
+      }))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+  };
+}
+
+function CanonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(CanonicalJson).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${CanonicalJson(v)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+export async function BookAnalysisComputeContentHash(
+  bookId: string,
+): Promise<string> {
+  const content = await BookAnalysisCollectContent(bookId);
+  return crypto
+    .createHash("sha256")
+    .update(CanonicalJson(content))
+    .digest("hex");
+}
+
 // ── Generate analysis for a book ──────────────────────────────────────────────
 
 export async function BookAnalysisGenerate(
   bookId: string,
 ): Promise<BookAnalysisResult> {
+  const contentHash = await BookAnalysisComputeContentHash(bookId);
   const book = await BooksDataGet(bookId);
   if (!book) {
     throw new Error(`Book not found: ${bookId}`);
@@ -94,23 +208,21 @@ export async function BookAnalysisGenerate(
   const attributes = await BookAttributesDataListByBook(bookId);
   const properties = await PropertiesDataListByBook(bookId);
 
-  // Gather property values for each section
+  // One bulk query for all section property values; real property names are
+  // resolved from the definitions (falling back to the id for unknown ones).
+  const nameById = new Map(properties.map((p) => [p.id, p.name]));
+  const values = await PropertiesDataGetAllSectionValuesForBook(bookId);
   const sectionPropertyValues: Record<
     string,
     { propertyName: string; value: string }[]
   > = {};
-  for (const section of sections) {
-    try {
-      const values = await PropertiesDataGetSectionValues(section.id);
-      if (values.length > 0) {
-        sectionPropertyValues[section.id] = values.map((v) => ({
-          propertyName: v.propertyId,
-          value: v.value || "",
-        }));
-      }
-    } catch {
-      // property values may not exist for all sections
-    }
+  for (const v of values) {
+    const list = sectionPropertyValues[v.sectionId] || [];
+    list.push({
+      propertyName: nameById.get(v.propertyId) || v.propertyId,
+      value: v.value || "",
+    });
+    sectionPropertyValues[v.sectionId] = list;
   }
 
   const prompt = buildPrompt(
@@ -172,6 +284,7 @@ export async function BookAnalysisGenerate(
     improvements,
     suggestions,
     rawOutput: fullContent || null,
+    contentHash,
   };
 
   const filePath = getFilePath(bookId);

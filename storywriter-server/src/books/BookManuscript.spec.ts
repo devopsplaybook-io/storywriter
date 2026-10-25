@@ -1,9 +1,13 @@
 import { Book } from "../model/Book";
 import { Section } from "../model/Section";
+import * as fs from "fs-extra";
+import * as os from "os";
+import * as path from "path";
 import * as zlib from "zlib";
 import {
   BookManuscriptCompile,
   CompiledBlock,
+  CompiledBook,
   ManuscriptMediaRef,
   MediaFileLoader,
   RenderManuscriptDocx,
@@ -367,15 +371,33 @@ describe("RenderManuscriptDocx", () => {
 });
 
 describe("RenderManuscriptEpub", () => {
-  it("returns a non-empty Buffer with zip magic and a stored mimetype first entry", async () => {
+  let epubTmpDir: string;
+
+  beforeAll(async () => {
+    epubTmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "storywriter-epub-"));
+  });
+
+  afterAll(async () => {
+    if (epubTmpDir) {
+      await fs.remove(epubTmpDir);
+    }
+  });
+
+  async function RenderEpubToBuffer(compiled: CompiledBook): Promise<Buffer> {
+    const tmpFile = await RenderManuscriptEpub(compiled, makeBook(), epubTmpDir);
+    expect(path.basename(tmpFile)).toMatch(/^epub-.+\.epub$/);
+    expect(fs.existsSync(tmpFile)).toBe(true);
+    return fs.readFile(tmpFile);
+  }
+
+  it("writes a non-empty file with zip magic and a stored mimetype first entry", async () => {
     const compiled = await BookManuscriptCompile(
       makeBook(),
       makeSections(),
       MEDIA_ITEMS,
       makeLoader(),
     );
-    const buffer = await RenderManuscriptEpub(compiled, makeBook());
-    expect(Buffer.isBuffer(buffer)).toBe(true);
+    const buffer = await RenderEpubToBuffer(compiled);
     expect(buffer.length).toBeGreaterThan(0);
     expect(buffer.subarray(0, 2).toString()).toBe("PK");
     // mimetype must be the first entry, stored uncompressed
@@ -389,7 +411,7 @@ describe("RenderManuscriptEpub", () => {
       MEDIA_ITEMS,
       makeLoader(),
     );
-    const buffer = await RenderManuscriptEpub(compiled, makeBook());
+    const buffer = await RenderEpubToBuffer(compiled);
     const opf = readZipEntry(buffer, "OEBPS/content.opf").toString("utf8");
     expect(opf).toContain("<dc:title>My Book</dc:title>");
     expect(opf).toContain('href="ch1.xhtml"');

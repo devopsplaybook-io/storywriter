@@ -646,7 +646,21 @@ function saveSection(sectionId, data) {
       await sectionsStore.update(sectionId, data);
       saveStatus.markSaved();
       clearDraft("section", sectionId);
-    } catch {
+    } catch (err) {
+      if (err?.response?.status === 409) {
+        // Someone else saved this section first: reload the server state and
+        // keep the local draft so the editor can retry on top of the new base.
+        saveStatus.markError("Section was modified by someone else");
+        toastsStore.error(
+          "This section changed on the server — reloading the latest version.",
+        );
+        try {
+          await sectionsStore.fetchByBook(book.value.id);
+        } catch {
+          // Refetch failed; the stale local copy stays until the next autosave
+        }
+        return;
+      }
       saveStatus.markError("Section save failed");
       toastsStore.error(
         "Section save failed — your text is kept locally and will retry.",

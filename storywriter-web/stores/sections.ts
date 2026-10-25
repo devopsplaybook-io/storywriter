@@ -17,6 +17,7 @@ export interface Section {
   orderIndex: number;
   dateCreated: string;
   dateUpdated: string;
+  revision: number;
 }
 
 export const useSectionsStore = defineStore("sections", {
@@ -85,7 +86,14 @@ export const useSectionsStore = defineStore("sections", {
         caption?: string;
       },
     ) {
-      const res = await api.put(`/sections/${id}`, data);
+      // Send the stored revision so the server can reject concurrent edits
+      // with a 409; when the section is unknown locally the update is
+      // unconditional (backwards compatible).
+      const stored = this.sections.find((s) => s.id === id);
+      const payload = stored
+        ? { revision: stored.revision, ...data }
+        : { ...data };
+      const res = await api.put(`/sections/${id}`, payload);
       const index = this.sections.findIndex((s) => s.id === id);
       if (index >= 0) this.sections[index] = res.data;
       if (this.currentSection?.id === id) this.currentSection = res.data;

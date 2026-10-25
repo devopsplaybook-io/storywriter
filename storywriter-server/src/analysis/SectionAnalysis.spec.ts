@@ -20,7 +20,8 @@ jest.mock("./LlmClient", () => ({
   LlmClientInit: jest.fn(),
   LlmIsAvailable: jest.fn(() => true),
   LlmModel: jest.fn(() => "test-model"),
-  LLM_TIMEOUT_MS: 90000,
+  LlmTimeoutMs: () => 45000,
+  LlmOverallTimeoutMs: () => 120000,
   callLLMWithRetry: jest.fn(),
 }));
 
@@ -64,6 +65,7 @@ function makeSection(overrides: Record<string, unknown> = {}) {
     mediaId: null,
     caption: "",
     orderIndex: 0,
+    revision: 1,
     dateCreated: "2026-10-16T00:00:00.000Z",
     dateUpdated: "2026-10-16T00:00:00.000Z",
     ...overrides,
@@ -178,7 +180,9 @@ describe("SectionAnalysis — generate", () => {
     expect(callLLMWithRetryMock).toHaveBeenCalledTimes(1);
     expect(updated.analysis).toContain("Aria opens the map.");
     expect(sectionsDataUpdateMock).toHaveBeenCalledTimes(1);
-    expect(sectionsDataUpdateMock).toHaveBeenCalledWith(updated);
+    // The AI-notes save is conflict-aware: it passes the section revision it
+    // loaded so a concurrent edit turns into a 409.
+    expect(sectionsDataUpdateMock).toHaveBeenCalledWith(updated, 1);
   });
 
   it("throws on an empty LLM response and writes nothing", async () => {

@@ -27,6 +27,7 @@ import { BookExportRun, BookImportRun } from "./BookExport";
 import { DeleteBookStorage, BookMediaDir } from "./BookFiles";
 import {
   BookManuscriptCompile,
+  ManuscriptTooLargeError,
   MediaFileLoader,
   ManuscriptInclude,
   RenderManuscriptDocx,
@@ -39,16 +40,21 @@ import { ImportValidationError } from "./BookArchiveValidation";
 import { Property } from "../model/Property";
 import {
   PropertiesDataAdd,
-  PropertiesDataGetSectionValues,
+  PropertiesDataGetAllSectionValuesForBook,
   PropertiesDataListByBook,
 } from "../properties/PropertiesData";
 import { MediaDataList } from "../media/MediaData";
 import {
   VersionsDataListByBook,
   VersionsDataGet,
+  VersionsDataGetMeta,
   VersionsDataCreate,
   VersionsDataRestore,
 } from "../versions/VersionsData";
+import {
+  ImportExportAcquire,
+  ImportExportRelease,
+} from "../utils/RequestLimits";
 
 function SafeExportFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9-_]/g, "_");
@@ -282,9 +288,10 @@ export class BooksRoutes {
         const version = await VersionsDataCreate(req.params.id, note, config);
         return res.status(201).send(version.toTransportJson());
       } catch (err) {
-        return res.status(500).send({
-          error: `Version creation failed: ${err.message || "Unknown error"}`,
-        });
+        req.log.error(err);
+        return res
+          .status(500)
+          .send({ error: "Version creation failed" });
       }
     });
 
@@ -314,7 +321,7 @@ export class BooksRoutes {
       }
       if (!(await CheckBookAccess(req, res, req.params.id, "read", book)))
         return;
-      const version = await VersionsDataGet(req.params.versionId);
+      const version = await VersionsDataGetMeta(req.params.versionId);
       if (!version || version.bookId !== req.params.id) {
         return res.status(404).send({ error: "Version Not Found" });
       }
@@ -363,9 +370,8 @@ export class BooksRoutes {
           await VersionsDataRestore(req.params.versionId, config);
           return res.status(200).send({ success: true });
         } catch (err) {
-          return res.status(500).send({
-            error: `Restore failed: ${err.message || "Unknown error"}`,
-          });
+          req.log.error(err);
+          return res.status(500).send({ error: "Restore failed" });
         }
       },
     );
@@ -376,6 +382,7 @@ export class BooksRoutes {
       Querystring: { format?: string; include?: string };
     }
     fastify.get<ExportBook>("/:id/export", async (req, res) => {
+      const userSession = await AuthGetUserSession(req);
       const book = await BooksDataGet(req.params.id);
       if (!book) {
         return res.status(404).send({ error: "Book Not Found" });
@@ -389,6 +396,11 @@ export class BooksRoutes {
       const include = (req.query.include || "content").toLowerCase();
       if (!["content", "full"].includes(include)) {
         return res.status(400).send({ error: "Unknown include option" });
+      }
+      if (!ImportExportAcquire(userSession.userId, config)) {
+        return res.status(429).send({
+          error: "Too many import/export operations, try again shortly",
+        });
       }
       try {
         if (format === "targz") {
@@ -419,14 +431,35 @@ export class BooksRoutes {
           return res.send(stream);
         }
 
-        // Manuscript formats: compile the book in tree order
+        // Manuscript formats: compile the book in tree order, bounded by
+        // content and media budgets so huge books fail with a clear 413
+        // instead of buffering the server to death.
         const sections = await SectionsDataListByBook(book.id);
+        const contentBytes = sections.reduce(
+          (sum, s) =>
+            sum +
+            Buffer.byteLength(s.title || "") +
+            Buffer.byteLength(s.content || "") +
+            Buffer.byteLength(s.analysis || ""),
+          0,
+        );
+        if (contentBytes > config.EXPORT_MAX_CONTENT_BYTES) {
+          throw new ManuscriptTooLargeError(
+            "Book content exceeds the export size limit",
+          );
+        }
         const mediaItems = await MediaDataList(book.id);
         const mediaById = new Map(mediaItems.map((m) => [m.id, m]));
+        let mediaBytesLoaded = 0;
         const loadMediaFile: MediaFileLoader = async (mediaBookId, mediaId) => {
           const media = mediaById.get(mediaId);
           if (!media) {
             return null;
+          }
+          if (mediaBytesLoaded + media.size > config.EXPORT_MAX_TOTAL_MEDIA_BYTES) {
+            throw new ManuscriptTooLargeError(
+              "Book media exceeds the export size limit",
+            );
           }
           try {
             const filePath = SafeJoin(
@@ -435,8 +468,17 @@ export class BooksRoutes {
               media.filename,
             );
             const buffer = await fs.promises.readFile(filePath);
+            mediaBytesLoaded += buffer.length;
+            if (mediaBytesLoaded > config.EXPORT_MAX_TOTAL_MEDIA_BYTES) {
+              throw new ManuscriptTooLargeError(
+                "Book media exceeds the export size limit",
+              );
+            }
             return { buffer, mimeType: media.mimeType };
-          } catch {
+          } catch (err) {
+            if (err instanceof ManuscriptTooLargeError) {
+              throw err;
+            }
             return null;
           }
         };
@@ -447,19 +489,18 @@ export class BooksRoutes {
             (p) => p.type === "section-type",
           );
           if (typeProperty) {
-            for (const section of sections) {
-              const values = await PropertiesDataGetSectionValues(section.id);
-              const value = values.find(
-                (v) => v.propertyId === typeProperty.id,
-              )?.value;
-              if (value) {
-                const labels = value
-                  .split(",")
-                  .map((t) => t.trim())
-                  .filter(Boolean);
-                if (labels.length > 0) {
-                  sectionLabels[section.id] = labels;
-                }
+            // One bulk query for the whole book, joined in memory.
+            const values = await PropertiesDataGetAllSectionValuesForBook(
+              book.id,
+            );
+            for (const value of values) {
+              if (value.propertyId !== typeProperty.id) continue;
+              const labels = value.value
+                .split(",")
+                .map((t) => t.trim())
+                .filter(Boolean);
+              if (labels.length > 0) {
+                sectionLabels[value.sectionId] = labels;
               }
             }
           }
@@ -485,26 +526,54 @@ export class BooksRoutes {
           return res.send(markdown);
         }
 
-        const buffer =
-          format === "docx"
-            ? await RenderManuscriptDocx(compiled, book)
-            : await RenderManuscriptEpub(compiled, book);
-        res.header(
-          "Content-Type",
-          format === "docx"
-            ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            : "application/epub+zip",
+        if (format === "docx") {
+          const buffer = await RenderManuscriptDocx(compiled, book);
+          res.header(
+            "Content-Type",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          );
+          res.header(
+            "Content-Disposition",
+            `attachment; filename="${safeName}.docx"`,
+          );
+          res.header("X-Filename", `${safeName}.docx`);
+          return res.send(buffer);
+        }
+
+        // EPUB: rendered to a temp file and streamed, so the archive is never
+        // buffered in memory on top of the compiled content.
+        const tmpFile = await RenderManuscriptEpub(
+          compiled,
+          book,
+          config.TMP_DIR,
         );
+        res.header("Content-Type", "application/epub+zip");
         res.header(
           "Content-Disposition",
-          `attachment; filename="${safeName}.${format}"`,
+          `attachment; filename="${safeName}.epub"`,
         );
-        res.header("X-Filename", `${safeName}.${format}`);
-        return res.send(buffer);
-      } catch (err) {
-        return res.status(500).send({
-          error: `Export failed: ${err.message || "Unknown error"}`,
+        res.header("X-Filename", `${safeName}.epub`);
+        const stream = fs.createReadStream(tmpFile);
+        const cleanup = () => {
+          fs.promises.unlink(tmpFile).catch(() => undefined);
+        };
+        stream.on("close", cleanup);
+        stream.on("error", (err) => {
+          cleanup();
+          req.log.error(`Export stream failed: ${err.message}`);
+          res.raw.destroy();
         });
+        return res.send(stream);
+      } catch (err) {
+        if (err instanceof ManuscriptTooLargeError) {
+          return res
+            .status(413)
+            .send({ error: `Book too large to export as ${format}` });
+        }
+        req.log.error(err);
+        return res.status(500).send({ error: "Export failed" });
+      } finally {
+        ImportExportRelease(userSession.userId);
       }
     });
 
@@ -513,6 +582,11 @@ export class BooksRoutes {
       const userSession = await AuthGetUserSession(req);
       if (!userSession.isAuthenticated) {
         return res.status(403).send({ error: "Access Denied" });
+      }
+      if (!ImportExportAcquire(userSession.userId, config)) {
+        return res.status(429).send({
+          error: "Too many import/export operations, try again shortly",
+        });
       }
       try {
         const data = await req.file();
@@ -536,9 +610,10 @@ export class BooksRoutes {
         ) {
           return res.status(413).send({ error: "Archive too large" });
         }
-        return res.status(500).send({
-          error: `Import failed: ${err.message || "Unknown error"}`,
-        });
+        req.log.error(err);
+        return res.status(500).send({ error: "Import failed" });
+      } finally {
+        ImportExportRelease(userSession.userId);
       }
     });
   }

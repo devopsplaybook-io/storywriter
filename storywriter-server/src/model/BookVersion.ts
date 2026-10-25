@@ -13,6 +13,9 @@ export class BookVersion {
     version.versionNumber = (json.versionNumber as number) || 1;
     version.note = (json.note as string) || "";
     version.snapshot = (json.snapshot as string) || "{}";
+    if (json.size !== undefined && json.size !== null) {
+      version.size = Number(json.size);
+    }
     version.dateCreated =
       (json.dateCreated as string) || new Date().toISOString();
     return version;
@@ -23,6 +26,8 @@ export class BookVersion {
   public versionNumber: number;
   public note: string;
   public snapshot: string;
+  /** Snapshot size (informational); only set by the metadata queries. */
+  public size?: number;
   public dateCreated: string;
 
   constructor() {
@@ -40,6 +45,7 @@ export class BookVersion {
       versionNumber: this.versionNumber,
       note: this.note,
       snapshot: this.snapshot,
+      size: this.size,
       dateCreated: this.dateCreated,
     };
   }
@@ -54,6 +60,9 @@ export class BookVersion {
       note: this.note,
       dateCreated: this.dateCreated,
     };
+    if (this.size !== undefined) {
+      json.size = this.size;
+    }
     if (options.includeSnapshot) {
       json.snapshot = this.snapshot;
     }

@@ -11,6 +11,7 @@ import {
 import {
   MAX_COPY_DEPTH,
   MAX_COPY_NODES,
+  SectionsConflictError,
   SectionsDataAdd,
   SectionsDataCopy,
   SectionsDataDelete,
@@ -23,14 +24,36 @@ import {
   SectionsDataUpdateOrder,
 } from "./SectionsData";
 import { collectSubtree, isSelfOrDescendant, subtreeDepth } from "./SectionsTree";
+import {
+  LlmLimitMessage,
+  LlmRequestAcquire,
+  LlmRequestRelease,
+} from "../utils/RequestLimits";
+import { AuthGetUserSession } from "@devopsplaybook.io/common-utils";
+import { Config } from "../Config";
 
 export class SectionsRoutes {
+  private config: Config;
+
+  constructor(config: Config) {
+    this.config = config;
+  }
+
   public async getRoutes(fastify: FastifyInstance): Promise<void> {
+    const config = this.config;
     // Shared error mapping for AI endpoints: unconfigured server → 503,
-    // generation failure → 502 with the underlying message.
+    // concurrent section edit → 409, generation failure → 502 with the
+    // underlying message.
     function sendAiError(res: any, error: unknown): void {
       if (error instanceof LlmUnavailableError) {
         res.status(503).send({ error: error.message });
+        return;
+      }
+      if (error instanceof SectionsConflictError) {
+        res.status(409).send({
+          error: "Section was modified by someone else",
+          revision: error.section.revision,
+        });
         return;
       }
       res
@@ -167,6 +190,7 @@ export class SectionsRoutes {
         analysis?: string;
         mediaId?: string;
         caption?: string;
+        revision?: number;
       };
     }
     fastify.put<PutSection>("/:id", async (req, res) => {
@@ -190,7 +214,19 @@ export class SectionsRoutes {
       if (req.body.analysis !== undefined) section.analysis = req.body.analysis;
       if (req.body.mediaId !== undefined) section.mediaId = req.body.mediaId;
       if (req.body.caption !== undefined) section.caption = req.body.caption;
-      await SectionsDataUpdate(section);
+      try {
+        // Requests without a revision keep the unconditional update
+        // (backwards-compatible for API-token scripts).
+        await SectionsDataUpdate(section, req.body.revision);
+      } catch (error) {
+        if (error instanceof SectionsConflictError) {
+          return res.status(409).send({
+            error: "Section was modified by someone else",
+            revision: error.section.revision,
+          });
+        }
+        throw error;
+      }
       return res.status(200).send(section.toTransportJson());
     });
 
@@ -199,6 +235,7 @@ export class SectionsRoutes {
       Params: { id: string };
     }
     fastify.post<PostSectionAnalysis>("/:id/analysis", async (req, res) => {
+      const userSession = await AuthGetUserSession(req);
       const section = await SectionsDataGet(req.params.id);
       if (!section) {
         return res.status(404).send({ error: "Section Not Found" });
@@ -209,11 +246,17 @@ export class SectionsRoutes {
           .status(400)
           .send({ error: "AI analysis is only available for text sections" });
       }
+      const guard = LlmRequestAcquire(userSession.userId, config);
+      if (guard !== "ok") {
+        return res.status(429).send({ error: LlmLimitMessage(guard) });
+      }
       try {
         const updated = await SectionAnalysisGenerate(section);
         return res.status(200).send(updated.toTransportJson());
       } catch (error) {
         return sendAiError(res, error);
+      } finally {
+        LlmRequestRelease(userSession.userId);
       }
     });
 
@@ -223,6 +266,7 @@ export class SectionsRoutes {
       Body: { action: string; selection?: string };
     }
     fastify.post<PostSectionAiAction>("/:id/ai-action", async (req, res) => {
+      const userSession = await AuthGetUserSession(req);
       const section = await SectionsDataGet(req.params.id);
       if (!section) {
         return res.status(404).send({ error: "Section Not Found" });
@@ -236,6 +280,10 @@ export class SectionsRoutes {
       if (!isAiActionId(req.body.action)) {
         return res.status(400).send({ error: "Unknown AI action" });
       }
+      const guard = LlmRequestAcquire(userSession.userId, config);
+      if (guard !== "ok") {
+        return res.status(429).send({ error: LlmLimitMessage(guard) });
+      }
       try {
         const text = await SectionAiActionGenerate(
           section,
@@ -245,6 +293,8 @@ export class SectionsRoutes {
         return res.status(200).send({ text });
       } catch (error) {
         return sendAiError(res, error);
+      } finally {
+        LlmRequestRelease(userSession.userId);
       }
     });
 

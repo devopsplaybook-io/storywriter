@@ -21,7 +21,7 @@ import {
 } from "../attributes/BookAttributesData";
 import {
   PropertiesDataListByBook,
-  PropertiesDataGetSectionValues,
+  PropertiesDataGetAllSectionValuesForBook,
   PropertiesDataAdd,
   PropertiesDataSetSectionValue,
 } from "../properties/PropertiesData";
@@ -64,20 +64,18 @@ export async function BookExportRun(
   const attributes = await BookAttributesDataListByBook(bookId);
   const properties = await PropertiesDataListByBook(bookId);
 
+  // One bulk query for the whole book instead of one query per section.
   const sectionProperties: {
     sectionId: string;
     propertyId: string;
     value: string;
   }[] = [];
-  for (const section of sections) {
-    const values = await PropertiesDataGetSectionValues(section.id);
-    for (const val of values) {
-      sectionProperties.push({
-        sectionId: section.id,
-        propertyId: val.propertyId,
-        value: val.value,
-      });
-    }
+  for (const val of await PropertiesDataGetAllSectionValuesForBook(bookId)) {
+    sectionProperties.push({
+      sectionId: val.sectionId,
+      propertyId: val.propertyId,
+      value: val.value,
+    });
   }
 
   const mediaItems = await MediaDataList(bookId);

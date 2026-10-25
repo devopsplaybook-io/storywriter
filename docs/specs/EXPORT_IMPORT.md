@@ -13,6 +13,9 @@
 - [x] `tar.gz` stays the backup format (unchanged): full archive with manifest, re-importable
 - [x] Import is **atomic**: a failed import leaves no book rows, no media files and no temp directory; invalid archives return `400`
 - [x] Import validation: entry allow-list, extraction limits (count/size/gzip ratio), section tree checks, media MIME/magic-byte/size checks, traversal-safe filenames
+- [x] **Size budgets for manuscript exports**: total section content (title + content + AI notes) is capped at `EXPORT_MAX_CONTENT_BYTES` (default 20 MiB) and total embedded media at `EXPORT_MAX_TOTAL_MEDIA_BYTES` (default 100 MiB); exceeding either returns `413` instead of buffering an unbounded book
+- [x] **Concurrency guard**: exports and imports run at most `IMPORT_EXPORT_CONCURRENCY` (default 2) per user; excess requests return `429`
+- [x] Property labels for `include=full` are gathered with **one bulk query** for the whole book instead of one query per section
 
 ## Archive Format
 
@@ -106,12 +109,12 @@ GET /api/books/:id/export?format=targz|markdown|docx|epub&include=content|full
 
 - Requires authentication and read access to the book.
 - `format` (default `targz`):
-  - `targz` — backup archive (`application/gzip`, headers below). The archive is built into a temporary file first; a failed export returns a `500` JSON error **before** any header is sent, and a missing DB-referenced media file fails the export loudly instead of producing an incomplete backup.
+  - `targz` — backup archive (`application/gzip`, headers below). The archive is built into a temporary file first; a failed export returns a `500` JSON error **before** any header is sent (stable message, cause only logged), and a missing DB-referenced media file fails the export loudly instead of producing an incomplete backup.
   - `markdown` — single Markdown manuscript (`text/markdown; charset=utf-8`).
   - `docx` — Word manuscript (`application/vnd.openxmlformats-officedocument.wordprocessingml.document`).
-  - `epub` — EPUB 3 e-book (`application/epub+zip`).
+  - `epub` — EPUB 3 e-book (`application/epub+zip`), rendered to a temporary file and **streamed** to the client so the archive is never fully buffered in memory.
 - `include` (default `content`, ignored for `targz`): `content` = manuscript only; `full` = manuscript with AI notes and section type labels per section.
-- Unknown `format`/`include` values return `400`.
+- Unknown `format`/`include` values return `400`; books over the content/media size budgets return `413`.
 - Response headers (`Content-Disposition` and `X-Filename`) carry a safe file name with the matching extension: `.tar.gz`, `.md`, `.docx` or `.epub`.
 - Archive/stream errors never crash the process: the temp file is removed and the connection closed.
 
@@ -123,8 +126,9 @@ POST /api/books/import
 
 - Requires authentication.
 - Accepts a multipart file upload (`file` field), capped at 10 MiB compressed by `@fastify/multipart` (`413` when exceeded).
+- Concurrency-limited per user like exports (`429` when exceeded).
 - Returns `201 Created` with the new book JSON.
-- Invalid or hostile archives return `400`; unexpected failures return `500` and leave no traces.
+- Invalid or hostile archives return `400`; unexpected failures return a stable `500` ("Import failed") and leave no traces.
 - The importing user automatically becomes owner and gets write access to the new book.
 
 ## Implementation
@@ -147,4 +151,4 @@ POST /api/books/import
 - `marked` — markdown → HTML for the DOCX/EPUB renderers
 - `@turbodocx/html-to-docx` — HTML → DOCX Buffer for the DOCX renderer
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-24_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-25_

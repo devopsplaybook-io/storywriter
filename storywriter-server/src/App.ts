@@ -19,8 +19,8 @@ import {
   DbUtilsSetOTel,
   UsersApiTokensDataSetOTel,
   UsersDataSetOTel,
-  UsersRoutes,
 } from "@devopsplaybook.io/common-utils";
+import { RegisterUsersRoutesWithLoginThrottle } from "./users/LoginThrottle";
 import { BooksRoutes } from "./books/BooksRoutes";
 import { SectionsRoutes } from "./sections/SectionsRoutes";
 import { PropertiesRoutes } from "./properties/PropertiesRoutes";
@@ -117,10 +117,9 @@ Promise.resolve().then(async () => {
     return { started: true };
   });
 
-  // Register common-utils users routes (session, CRUD, password)
-  fastify.register(new UsersRoutes().getRoutes, {
-    prefix: "/api/users",
-  });
+  // Register common-utils users routes (session, CRUD, password) behind a
+  // per-IP login throttle
+  await RegisterUsersRoutesWithLoginThrottle(fastify, config);
 
   await fastify.register(
     async (instance) => {
@@ -131,7 +130,7 @@ Promise.resolve().then(async () => {
 
   await fastify.register(
     async (instance) => {
-      await new SectionsRoutes().getRoutes(instance);
+      await new SectionsRoutes(config).getRoutes(instance);
     },
     { prefix: "/api/sections" },
   );
@@ -152,7 +151,7 @@ Promise.resolve().then(async () => {
 
   await fastify.register(
     async (instance) => {
-      await new BookAnalysisRoutes().getRoutes(instance);
+      await new BookAnalysisRoutes(config).getRoutes(instance);
     },
     { prefix: "/api/books" },
   );
@@ -198,5 +197,22 @@ Promise.resolve().then(async () => {
       process.exit(1);
     }
     logger.info("API Listening");
+
+    // Graceful shutdown: stop accepting connections, let in-flight requests
+    // finish, then exit (a force-exit timer guards against a hung close).
+    const shutdown = (signal: string) => {
+      logger.info(`${signal} received, shutting down`);
+      const forceExit = setTimeout(() => process.exit(0), 10000);
+      forceExit.unref();
+      fastify
+        .close()
+        .then(() => process.exit(0))
+        .catch((closeErr) => {
+          logger.error("Error during shutdown", closeErr);
+          process.exit(1);
+        });
+    };
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
   });
 });

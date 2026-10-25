@@ -65,7 +65,9 @@ export async function SectionAnalysisGenerate(
   }
 
   section.analysis = analysis.trim();
-  await SectionsDataUpdate(section);
+  // The section was read before the LLM call: a concurrent edit meanwhile
+  // surfaces as a conflict instead of silently overwriting it.
+  await SectionsDataUpdate(section, section.revision);
   logger.info(
     `[SectionAnalysis] Analysis saved for section "${section.title}"`,
   );

@@ -104,7 +104,8 @@ describe("Book export", () => {
       user.token,
     );
     expect(res.statusCode).toBe(500);
-    expect(JSON.parse(res.body).error).toContain("media file missing");
+    // The response carries a stable message; the cause is only logged.
+    expect(JSON.parse(res.body).error).toBe("Export failed");
     // No partial export file left behind.
     await WaitForEmptyTmpDir(server);
   });

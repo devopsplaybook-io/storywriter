@@ -26,15 +26,20 @@ jest.mock("../attributes/BookAttributesData", () => ({
 }));
 
 jest.mock("../properties/PropertiesData", () => ({
-  PropertiesDataGetSectionValues: jest.fn(),
   PropertiesDataListByBook: jest.fn(),
+  PropertiesDataGetAllSectionValuesForBook: jest.fn(),
+}));
+
+jest.mock("../media/MediaData", () => ({
+  MediaDataList: jest.fn(),
 }));
 
 jest.mock("./LlmClient", () => ({
   LlmClientInit: jest.fn(),
   LlmIsAvailable: jest.fn(() => true),
   LlmModel: jest.fn(() => "test-model"),
-  LLM_TIMEOUT_MS: 90000,
+  LlmTimeoutMs: () => 45000,
+  LlmOverallTimeoutMs: () => 120000,
   callLLMWithRetry: jest.fn(),
 }));
 
@@ -53,9 +58,10 @@ import { BooksDataGet } from "../books/BooksData";
 import { SectionsDataListByBook } from "../sections/SectionsData";
 import { BookAttributesDataListByBook } from "../attributes/BookAttributesData";
 import {
-  PropertiesDataGetSectionValues,
+  PropertiesDataGetAllSectionValuesForBook,
   PropertiesDataListByBook,
 } from "../properties/PropertiesData";
+import { MediaDataList } from "../media/MediaData";
 
 beforeAll(async () => {
   await BookAnalysisInit({ DATA_DIR: "/tmp/storywriter-test" } as any);
@@ -66,9 +72,10 @@ const booksDataGetMock = BooksDataGet as jest.Mock;
 const sectionsDataListByBookMock = SectionsDataListByBook as jest.Mock;
 const bookAttributesDataListByBookMock =
   BookAttributesDataListByBook as jest.Mock;
-const propertiesDataGetSectionValuesMock =
-  PropertiesDataGetSectionValues as jest.Mock;
+const propertiesDataGetAllSectionValuesMock =
+  PropertiesDataGetAllSectionValuesForBook as jest.Mock;
 const propertiesDataListByBookMock = PropertiesDataListByBook as jest.Mock;
+const mediaDataListMock = MediaDataList as jest.Mock;
 
 function makeSection(overrides: Record<string, unknown> = {}) {
   return {
@@ -95,8 +102,9 @@ function seedBook() {
     description: "A test book",
     dateCreated: "2026-10-16T00:00:00.000Z",
   });
-  propertiesDataGetSectionValuesMock.mockResolvedValue([]);
+  propertiesDataGetAllSectionValuesMock.mockResolvedValue([]);
   propertiesDataListByBookMock.mockResolvedValue([]);
+  mediaDataListMock.mockResolvedValue([]);
 }
 
 describe("BookAnalysis — budget helpers", () => {
