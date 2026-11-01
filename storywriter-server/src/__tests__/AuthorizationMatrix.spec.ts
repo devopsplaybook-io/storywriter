@@ -117,7 +117,7 @@ describe("Authorization matrix", () => {
 
     it("requires authentication", async () => {
       const res = await server.inject("GET", "/api/books");
-      expect(res.statusCode).toBe(403);
+      expect(res.statusCode).toBe(401);
     });
   });
 
@@ -125,7 +125,7 @@ describe("Authorization matrix", () => {
     it("denies unauthenticated and unauthorized users", async () => {
       expect(
         (await server.inject("GET", `/api/books/${bookA.id}`)).statusCode,
-      ).toBe(403);
+      ).toBe(401);
       expect(
         (
           await server.inject(
@@ -192,7 +192,7 @@ describe("Authorization matrix", () => {
       expect(
         (await server.inject("GET", `/api/books/${bookA.id}/access`))
           .statusCode,
-      ).toBe(403);
+      ).toBe(401);
 
       const ownerRes = await server.inject(
         "GET",
@@ -396,7 +396,7 @@ describe("Authorization matrix", () => {
       expect(
         (await server.inject("GET", `/api/books/${bookA.id}/versions`))
           .statusCode,
-      ).toBe(403);
+      ).toBe(401);
 
       const readerList = await server.inject(
         "GET",

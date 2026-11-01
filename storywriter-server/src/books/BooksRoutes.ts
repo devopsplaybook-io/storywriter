@@ -1,6 +1,9 @@
 import { FastifyInstance, RequestGenericInterface } from "fastify";
 import * as fs from "fs";
-import { AuthGetUserSession } from "@devopsplaybook.io/common-utils";
+import {
+  AUTH_ERROR_CODE_UNAUTHENTICATED,
+  AuthGetLiveUser,
+} from "@devopsplaybook.io/common-utils";
 import { Book } from "../model/Book";
 import {
   BooksDataAdd,
@@ -71,24 +74,27 @@ export class BooksRoutes {
     const config = this.config;
     // ==================== LIST BOOKS ====================
     fastify.get("/", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        return res.status(403).send({ error: "Access Denied" });
+      const user = await AuthGetLiveUser(req);
+      if (!user) {
+        return res.status(401).send({
+          error: "Authentication Required",
+          code: AUTH_ERROR_CODE_UNAUTHENTICATED,
+        });
       }
       let books: Book[];
       let permissions: Record<string, "read" | "write"> = {};
-      if (userSession.role === "admin") {
+      if (user.role === "admin") {
         books = await BooksDataList();
       } else {
-        books = await BooksDataListForUser(userSession.userId);
-        permissions = await BooksDataGetPermissionsForUser(userSession.userId);
+        books = await BooksDataListForUser(user.id);
+        permissions = await BooksDataGetPermissionsForUser(user.id);
       }
       return res.status(200).send(
         books.map((b) => {
           let permission: string | null;
-          if (userSession.role === "admin") {
+          if (user.role === "admin") {
             permission = "admin";
-          } else if (b.ownerId === userSession.userId) {
+          } else if (b.ownerId === user.id) {
             permission = "owner";
           } else {
             permission = permissions[b.id] || null;
@@ -103,15 +109,18 @@ export class BooksRoutes {
       Params: { id: string };
     }
     fastify.get<GetBook>("/:id", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        return res.status(403).send({ error: "Access Denied" });
+      const user = await AuthGetLiveUser(req);
+      if (!user) {
+        return res.status(401).send({
+          error: "Authentication Required",
+          code: AUTH_ERROR_CODE_UNAUTHENTICATED,
+        });
       }
       const book = await BooksDataGet(req.params.id);
       if (!book) {
         return res.status(404).send({ error: "Book Not Found" });
       }
-      const permission = await BookAccessGet(req, book, userSession);
+      const permission = await BookAccessGet(req, book, user);
       if (!permission) {
         return res.status(403).send({ error: "Access Denied" });
       }
@@ -125,9 +134,12 @@ export class BooksRoutes {
       Body: { name: string; description?: string; writingGoal?: number };
     }
     fastify.post<PostBook>("/", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        return res.status(403).send({ error: "Access Denied" });
+      const user = await AuthGetLiveUser(req);
+      if (!user) {
+        return res.status(401).send({
+          error: "Authentication Required",
+          code: AUTH_ERROR_CODE_UNAUTHENTICATED,
+        });
       }
       if (!req.body.name) {
         return res.status(400).send({ error: "Missing: Name" });
@@ -137,7 +149,7 @@ export class BooksRoutes {
       book.name = req.body.name;
       book.description = req.body.description || "";
       book.writingGoal = Math.max(0, Math.floor(Number(req.body.writingGoal) || 0));
-      book.ownerId = userSession.userId;
+      book.ownerId = user.id;
       await BooksDataAdd(book);
 
       // Create root section for the book
@@ -151,9 +163,9 @@ export class BooksRoutes {
       await PropertiesDataAdd(defaultProperty);
 
       // Give creator write access
-      await BooksDataSetAccess(book.id, userSession.userId, "write");
+      await BooksDataSetAccess(book.id, user.id, "write");
 
-      const permission = await BookAccessGet(req, book, userSession);
+      const permission = await BookAccessGet(req, book, user);
       return res.status(201).send({ ...book.toTransportJson(), permission });
     });
 
@@ -163,9 +175,12 @@ export class BooksRoutes {
       Body: { name?: string; description?: string; writingGoal?: number };
     }
     fastify.put<PutBook>("/:id", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        return res.status(403).send({ error: "Access Denied" });
+      const user = await AuthGetLiveUser(req);
+      if (!user) {
+        return res.status(401).send({
+          error: "Authentication Required",
+          code: AUTH_ERROR_CODE_UNAUTHENTICATED,
+        });
       }
       const book = await BooksDataGet(req.params.id);
       if (!book) {
@@ -183,7 +198,7 @@ export class BooksRoutes {
           Math.floor(Number(req.body.writingGoal) || 0),
         );
       await BooksDataUpdate(book);
-      const permission = await BookAccessGet(req, book, userSession);
+      const permission = await BookAccessGet(req, book, user);
       return res.status(200).send({ ...book.toTransportJson(), permission });
     });
 
@@ -382,7 +397,7 @@ export class BooksRoutes {
       Querystring: { format?: string; include?: string };
     }
     fastify.get<ExportBook>("/:id/export", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
+      const user = await AuthGetLiveUser(req);
       const book = await BooksDataGet(req.params.id);
       if (!book) {
         return res.status(404).send({ error: "Book Not Found" });
@@ -397,7 +412,7 @@ export class BooksRoutes {
       if (!["content", "full"].includes(include)) {
         return res.status(400).send({ error: "Unknown include option" });
       }
-      if (!ImportExportAcquire(userSession.userId, config)) {
+      if (!ImportExportAcquire(user?.id, config)) {
         return res.status(429).send({
           error: "Too many import/export operations, try again shortly",
         });
@@ -573,17 +588,20 @@ export class BooksRoutes {
         req.log.error(err);
         return res.status(500).send({ error: "Export failed" });
       } finally {
-        ImportExportRelease(userSession.userId);
+        ImportExportRelease(user?.id);
       }
     });
 
     // ==================== IMPORT BOOK ====================
     fastify.post("/import", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
-      if (!userSession.isAuthenticated) {
-        return res.status(403).send({ error: "Access Denied" });
+      const user = await AuthGetLiveUser(req);
+      if (!user) {
+        return res.status(401).send({
+          error: "Authentication Required",
+          code: AUTH_ERROR_CODE_UNAUTHENTICATED,
+        });
       }
-      if (!ImportExportAcquire(userSession.userId, config)) {
+      if (!ImportExportAcquire(user.id, config)) {
         return res.status(429).send({
           error: "Too many import/export operations, try again shortly",
         });
@@ -597,7 +615,7 @@ export class BooksRoutes {
         const book = await BookImportRun(
           buffer,
           config,
-          userSession.userId,
+          user.id,
         );
         return res.status(201).send(book.toTransportJson());
       } catch (err) {
@@ -613,7 +631,7 @@ export class BooksRoutes {
         req.log.error(err);
         return res.status(500).send({ error: "Import failed" });
       } finally {
-        ImportExportRelease(userSession.userId);
+        ImportExportRelease(user.id);
       }
     });
   }

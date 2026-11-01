@@ -138,7 +138,7 @@ describe("Rate-limited routes", () => {
           undefined,
           { name: "nobody", password: "wrong" },
         );
-        expect(res.statusCode).toBe(403);
+        expect(res.statusCode).toBe(401);
       }
       const blocked = await server.inject(
         "POST",

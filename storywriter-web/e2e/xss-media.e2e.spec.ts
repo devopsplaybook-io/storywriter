@@ -188,7 +188,7 @@ test("stored XSS stays inert and media renders via authenticated blobs", async (
   expect(documentHtml).not.toContain("token=");
   const mediaUrl = `/api/books/${seedData.bookId}/media/${seedData.mediaId}/file`;
   const anonymous = await request.get(mediaUrl);
-  expect(anonymous.status()).toBe(403);
+  expect(anonymous.status()).toBe(401);
 
   // 3. Response headers on API and media endpoints
   const status = await request.get("/api/status");
