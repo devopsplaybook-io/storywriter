@@ -132,7 +132,7 @@ describe("Media routes", () => {
       `/api/books/${bookId}/media/${media.id}/file?token=${encodeURIComponent(user.token)}`,
       undefined,
     );
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(401);
   });
 
   it("returns 415 for stored media whose MIME type is not allow-listed", async () => {

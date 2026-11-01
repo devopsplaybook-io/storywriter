@@ -1,4 +1,7 @@
-import { AuthGetUserSession } from "@devopsplaybook.io/common-utils";
+import {
+  AUTH_ERROR_CODE_UNAUTHENTICATED,
+  AuthGetLiveUser,
+} from "@devopsplaybook.io/common-utils";
 import { Book } from "../model/Book";
 import { BooksDataGet, BooksDataGetUserAccess } from "./BooksData";
 
@@ -13,22 +16,22 @@ export type BookAccessLevel = "read" | "write" | "owner" | "admin";
 export async function BookAccessGet(
   req: any,
   book: Book,
-  session?: any,
+  user?: any,
 ): Promise<BookAccessLevel | null> {
   if (!book) {
     return null;
   }
-  const userSession = session || (await AuthGetUserSession(req));
-  if (!userSession.isAuthenticated) {
+  const effectiveUser = user || (await AuthGetLiveUser(req));
+  if (!effectiveUser) {
     return null;
   }
-  if (userSession.role === "admin") {
+  if (effectiveUser.role === "admin") {
     return "admin";
   }
-  if (book.ownerId && book.ownerId === userSession.userId) {
+  if (book.ownerId && book.ownerId === effectiveUser.id) {
     return "owner";
   }
-  const access = await BooksDataGetUserAccess(book.id, userSession.userId);
+  const access = await BooksDataGetUserAccess(book.id, effectiveUser.id);
   if (access === "write" || access === "read") {
     return access;
   }
@@ -37,8 +40,8 @@ export async function BookAccessGet(
 
 /**
  * Require at least read (default) or write access to a book.
- * Sends 403 when unauthenticated/unauthorized and 404 when the book is
- * missing (unless the book object was resolved by the caller).
+ * Sends 401 when unauthenticated, 403 when unauthorized and 404 when the book
+ * is missing (unless the book object was resolved by the caller).
  */
 export async function CheckBookAccess(
   req: any,
@@ -47,9 +50,12 @@ export async function CheckBookAccess(
   required: "read" | "write" = "read",
   book?: Book,
 ): Promise<boolean> {
-  const userSession = await AuthGetUserSession(req);
-  if (!userSession.isAuthenticated) {
-    res.status(403).send({ error: "Access Denied" });
+  const user = await AuthGetLiveUser(req);
+  if (!user) {
+    res.status(401).send({
+      error: "Authentication Required",
+      code: AUTH_ERROR_CODE_UNAUTHENTICATED,
+    });
     return false;
   }
   const target = book || (await BooksDataGet(bookId));
@@ -57,7 +63,7 @@ export async function CheckBookAccess(
     res.status(404).send({ error: "Book Not Found" });
     return false;
   }
-  const level = await BookAccessGet(req, target, userSession);
+  const level = await BookAccessGet(req, target, user);
   if (!level) {
     res.status(403).send({ error: "Access Denied" });
     return false;
@@ -78,9 +84,12 @@ export async function CheckBookOwnerOrAdmin(
   bookId: string,
   book?: Book,
 ): Promise<boolean> {
-  const userSession = await AuthGetUserSession(req);
-  if (!userSession.isAuthenticated) {
-    res.status(403).send({ error: "Access Denied" });
+  const user = await AuthGetLiveUser(req);
+  if (!user) {
+    res.status(401).send({
+      error: "Authentication Required",
+      code: AUTH_ERROR_CODE_UNAUTHENTICATED,
+    });
     return false;
   }
   const target = book || (await BooksDataGet(bookId));
@@ -88,10 +97,10 @@ export async function CheckBookOwnerOrAdmin(
     res.status(404).send({ error: "Book Not Found" });
     return false;
   }
-  if (userSession.role === "admin") {
+  if (user.role === "admin") {
     return true;
   }
-  if (target.ownerId && target.ownerId === userSession.userId) {
+  if (target.ownerId && target.ownerId === user.id) {
     return true;
   }
   res.status(403).send({ error: "Owner Access Required" });

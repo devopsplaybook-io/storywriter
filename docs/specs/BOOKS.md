@@ -29,7 +29,7 @@ Books are the top-level organizational unit in Storywriter. Each book represents
 - [x] Users with **read** access can view the book but not edit sections or content.
 - [x] Users with **write** access can edit sections, attributes, and properties.
 - [x] Access is managed via a dialog accessible from the books list.
-- [x] Every book-scoped GET requires at least read access; a missing or unauthorized book returns `403`/`404` consistently.
+- [x] Every book-scoped GET requires at least read access; an unauthenticated request returns `401`, a missing book `404` and an unauthorized one `403` consistently.
 
 ## Data Model
 
@@ -41,4 +41,4 @@ Books are the top-level organizational unit in Storywriter. Each book represents
 - [x] Book list/detail responses include `ownerId` and the caller's `permission` (`admin`/`owner`/`write`/`read`/null).
 - [x] Book version **list and metadata responses omit the heavy `snapshot`** (the queries select metadata plus the snapshot `size` only); clients fetch the payload from the read-checked `GET /api/books/:id/versions/:versionId/snapshot` or restore via POST.
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-25_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-31_

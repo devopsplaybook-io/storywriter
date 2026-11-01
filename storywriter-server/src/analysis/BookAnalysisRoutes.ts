@@ -1,5 +1,5 @@
 import { FastifyInstance, RequestGenericInterface } from "fastify";
-import { AuthGetUserSession } from "@devopsplaybook.io/common-utils";
+import { AuthGetLiveUser } from "@devopsplaybook.io/common-utils";
 import { BooksDataGet } from "../books/BooksData";
 import { CheckBookAccess } from "../books/BookAccess";
 import { Config } from "../Config";
@@ -59,7 +59,7 @@ export class BookAnalysisRoutes {
       Params: { id: string };
     }
     fastify.post<PostAnalysis>("/:id/analysis", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
+      const user = await AuthGetLiveUser(req);
       const book = await BooksDataGet(req.params.id);
       if (!book) {
         return res.status(404).send({ error: "Book Not Found" });
@@ -72,7 +72,7 @@ export class BookAnalysisRoutes {
             "AI assistance is not configured on this server (LLM_API_KEY missing)",
         });
       }
-      const guard = LlmRequestAcquire(userSession.userId, config);
+      const guard = LlmRequestAcquire(user?.id, config);
       if (guard !== "ok") {
         return res.status(429).send({ error: LlmLimitMessage(guard) });
       }
@@ -85,7 +85,7 @@ export class BookAnalysisRoutes {
           .status(502)
           .send({ error: (error as Error).message || "Analysis failed" });
       } finally {
-        LlmRequestRelease(userSession.userId);
+        LlmRequestRelease(user?.id);
       }
     });
   }

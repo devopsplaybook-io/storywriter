@@ -1,4 +1,4 @@
-import { Span } from "@opentelemetry/sdk-trace-base";
+import type { Span } from "@opentelemetry/sdk-trace";
 import {
   DbUtilsSetOTel as _DbUtilsSetOTel,
   DbUtilsInit as _DbUtilsInit,

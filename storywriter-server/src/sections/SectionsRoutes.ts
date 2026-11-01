@@ -29,7 +29,7 @@ import {
   LlmRequestAcquire,
   LlmRequestRelease,
 } from "../utils/RequestLimits";
-import { AuthGetUserSession } from "@devopsplaybook.io/common-utils";
+import { AuthGetLiveUser } from "@devopsplaybook.io/common-utils";
 import { Config } from "../Config";
 
 export class SectionsRoutes {
@@ -235,7 +235,7 @@ export class SectionsRoutes {
       Params: { id: string };
     }
     fastify.post<PostSectionAnalysis>("/:id/analysis", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
+      const user = await AuthGetLiveUser(req);
       const section = await SectionsDataGet(req.params.id);
       if (!section) {
         return res.status(404).send({ error: "Section Not Found" });
@@ -246,7 +246,7 @@ export class SectionsRoutes {
           .status(400)
           .send({ error: "AI analysis is only available for text sections" });
       }
-      const guard = LlmRequestAcquire(userSession.userId, config);
+      const guard = LlmRequestAcquire(user?.id, config);
       if (guard !== "ok") {
         return res.status(429).send({ error: LlmLimitMessage(guard) });
       }
@@ -256,7 +256,7 @@ export class SectionsRoutes {
       } catch (error) {
         return sendAiError(res, error);
       } finally {
-        LlmRequestRelease(userSession.userId);
+        LlmRequestRelease(user?.id);
       }
     });
 
@@ -266,7 +266,7 @@ export class SectionsRoutes {
       Body: { action: string; selection?: string };
     }
     fastify.post<PostSectionAiAction>("/:id/ai-action", async (req, res) => {
-      const userSession = await AuthGetUserSession(req);
+      const user = await AuthGetLiveUser(req);
       const section = await SectionsDataGet(req.params.id);
       if (!section) {
         return res.status(404).send({ error: "Section Not Found" });
@@ -280,7 +280,7 @@ export class SectionsRoutes {
       if (!isAiActionId(req.body.action)) {
         return res.status(400).send({ error: "Unknown AI action" });
       }
-      const guard = LlmRequestAcquire(userSession.userId, config);
+      const guard = LlmRequestAcquire(user?.id, config);
       if (guard !== "ok") {
         return res.status(429).send({ error: LlmLimitMessage(guard) });
       }
@@ -294,7 +294,7 @@ export class SectionsRoutes {
       } catch (error) {
         return sendAiError(res, error);
       } finally {
-        LlmRequestRelease(userSession.userId);
+        LlmRequestRelease(user?.id);
       }
     });
 
