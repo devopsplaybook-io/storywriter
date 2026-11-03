@@ -5,18 +5,22 @@
 - [x] The first user to register is automatically granted the **admin** role.
 - [x] Subsequent users can be added by the admin via the Admin page.
 - [x] Users authenticate with username and password.
+- [x] Passwords must be at least 8 characters (`PASSWORD_MIN_LENGTH`). The rule applies to registration, admin-created users and password changes; the login form only enforces it when creating the first admin account, so existing shorter passwords still work.
 
 ## Authentication
 
 - [x] JWT-based session tokens stored in localStorage.
 - [x] Session tokens are renewed periodically.
 - [x] Login page detects if the server is uninitialized and offers admin account creation.
+- [x] Login failures are throttled per client IP + username: at most `RATE_LIMIT_LOGIN_MAX` failed attempts per `RATE_LIMIT_LOGIN_WINDOW_MS`; successful logins do not consume the budget, so one user's failures never lock out other users. Exceeding the budget returns HTTP 429 with `Retry-After` and `{ "error": "Too many login attempts, try again later" }`.
+- [x] Behind a reverse proxy, `TRUST_PROXY` must be `true` so the throttle keys on the forwarded client address (X-Forwarded-For); it is `false` by default and must only be enabled when all traffic arrives through a trusted proxy (the bundled `config.json` enables it for the proxied deployment).
 
 ## Password Change
 
 - [x] A **Change Password** button in Settings opens a dialog.
 - [x] The dialog collects current password, new password, and confirmation.
 - [x] Server verifies the current password before applying the change.
+- [x] The new password must meet the same 8-character minimum as registration, and the form communicates the requirement.
 
 ## API Tokens
 
@@ -47,4 +51,4 @@
 - [x] Admin can add new users.
 - [x] Admin can delete users (except themselves).
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-23_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-11-02_

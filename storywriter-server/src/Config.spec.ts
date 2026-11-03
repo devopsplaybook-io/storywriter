@@ -17,6 +17,8 @@ describe("Config", () => {
     delete process.env.API_PORT;
     delete process.env.CORS_POLICY_ORIGIN;
     delete process.env.APPLICATION_TITLE;
+    delete process.env.TRUST_PROXY;
+    delete process.env.PASSWORD_MIN_LENGTH;
   });
 
   describe("constructor", () => {
@@ -31,6 +33,9 @@ describe("Config", () => {
         "https://api.deepseek.com/chat/completions",
       );
       expect(config.LLM_MODEL).toBe("deepseek-chat");
+      expect(config.TRUST_PROXY).toBe(false);
+      expect(config.PASSWORD_MIN_LENGTH).toBe(8);
+      expect(config.CORS_POLICY_ORIGIN).toBe("");
     });
 
     it("should read DATA_DIR from environment", () => {
@@ -62,6 +67,9 @@ describe("Config", () => {
         APPLICATION_TITLE: "My Storywriter",
         API_PORT: 9090,
         JWT_KEY: "my-secret-key",
+        TRUST_PROXY: true,
+        PASSWORD_MIN_LENGTH: 12,
+        CORS_POLICY_ORIGIN: "https://a.example, https://b.example",
       });
 
       const config = new Config();
@@ -70,6 +78,11 @@ describe("Config", () => {
       expect(config.APPLICATION_TITLE).toBe("My Storywriter");
       expect(config.API_PORT).toBe(9090);
       expect(config.JWT_KEY).toBe("my-secret-key");
+      expect(config.TRUST_PROXY).toBe(true);
+      expect(config.PASSWORD_MIN_LENGTH).toBe(12);
+      expect(config.CORS_POLICY_ORIGIN).toBe(
+        "https://a.example, https://b.example",
+      );
     });
 
     it("should use defaults for missing config values", async () => {
@@ -88,10 +101,16 @@ describe("Config", () => {
     it("should override config file values with environment variables", async () => {
       process.env.APPLICATION_TITLE = "Env Title";
       process.env.API_PORT = "3000";
+      process.env.TRUST_PROXY = "true";
+      process.env.PASSWORD_MIN_LENGTH = "10";
+      process.env.CORS_POLICY_ORIGIN = "https://env.example";
 
       fsMock.readJson.mockResolvedValueOnce({
         APPLICATION_TITLE: "File Title",
         API_PORT: 8080,
+        TRUST_PROXY: false,
+        PASSWORD_MIN_LENGTH: 12,
+        CORS_POLICY_ORIGIN: "https://file.example",
       });
 
       const config = new Config();
@@ -99,6 +118,9 @@ describe("Config", () => {
 
       expect(config.APPLICATION_TITLE).toBe("Env Title");
       expect(config.API_PORT).toBe(3000);
+      expect(config.TRUST_PROXY).toBe(true);
+      expect(config.PASSWORD_MIN_LENGTH).toBe(10);
+      expect(config.CORS_POLICY_ORIGIN).toBe("https://env.example");
     });
   });
 });

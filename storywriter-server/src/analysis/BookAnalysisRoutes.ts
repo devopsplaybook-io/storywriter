@@ -8,7 +8,7 @@ import {
   BookAnalysisGetCached,
   BookAnalysisIsStale,
 } from "./BookAnalysis";
-import { LlmIsAvailable } from "./LlmClient";
+import { AI_PROVIDER_ERROR_MESSAGE, LlmIsAvailable } from "./LlmClient";
 import {
   LlmLimitMessage,
   LlmRequestAcquire,
@@ -81,9 +81,10 @@ export class BookAnalysisRoutes {
         const result = await BookAnalysisGenerate(req.params.id);
         return res.status(200).send(result);
       } catch (error) {
-        return res
-          .status(502)
-          .send({ error: (error as Error).message || "Analysis failed" });
+        // Provider errors can contain URLs, request ids or response bodies:
+        // log the detail and return a stable message to the client.
+        req.log.error({ err: error }, "Book analysis generation failed");
+        return res.status(502).send({ error: AI_PROVIDER_ERROR_MESSAGE });
       } finally {
         LlmRequestRelease(user?.id);
       }

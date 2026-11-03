@@ -5,6 +5,9 @@ const logger = console;
 
 let config: Config;
 
+/** Stable client-facing message for any LLM provider failure. */
+export const AI_PROVIDER_ERROR_MESSAGE = "AI provider request failed";
+
 // ── Public Interface ──────────────────────────────────────────────────────────
 
 export function LlmClientInit(configIn: Config): void {

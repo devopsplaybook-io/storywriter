@@ -110,8 +110,10 @@
               v-model="newUser.password"
               type="password"
               required
+              :minlength="PASSWORD_MIN_LENGTH"
               placeholder="Password"
             />
+            <small>{{ PasswordMinimumHint() }}</small>
           </label>
           <label>
             Role
@@ -161,6 +163,10 @@
 
 <script setup>
 import api from "../utils/api";
+import {
+  PASSWORD_MIN_LENGTH,
+  PasswordMinimumHint,
+} from "../utils/passwordPolicy";
 import { useLlmStore } from "../stores/llm";
 
 const authStore = useAuthStore();

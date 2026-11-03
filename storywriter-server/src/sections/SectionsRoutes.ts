@@ -31,6 +31,7 @@ import {
 } from "../utils/RequestLimits";
 import { AuthGetLiveUser } from "@devopsplaybook.io/common-utils";
 import { Config } from "../Config";
+import { AI_PROVIDER_ERROR_MESSAGE } from "../analysis/LlmClient";
 
 export class SectionsRoutes {
   private config: Config;
@@ -42,9 +43,9 @@ export class SectionsRoutes {
   public async getRoutes(fastify: FastifyInstance): Promise<void> {
     const config = this.config;
     // Shared error mapping for AI endpoints: unconfigured server → 503,
-    // concurrent section edit → 409, generation failure → 502 with the
-    // underlying message.
-    function sendAiError(res: any, error: unknown): void {
+    // concurrent section edit → 409, generation failure → 502 with a stable
+    // message (the provider detail is logged, never echoed).
+    function sendAiError(req: any, res: any, error: unknown): void {
       if (error instanceof LlmUnavailableError) {
         res.status(503).send({ error: error.message });
         return;
@@ -56,9 +57,8 @@ export class SectionsRoutes {
         });
         return;
       }
-      res
-        .status(502)
-        .send({ error: (error as Error)?.message || "AI request failed" });
+      req.log.error({ err: error }, "AI generation failed");
+      res.status(502).send({ error: AI_PROVIDER_ERROR_MESSAGE });
     }
 
     // ==================== LIST SECTIONS BY BOOK ====================
@@ -254,7 +254,7 @@ export class SectionsRoutes {
         const updated = await SectionAnalysisGenerate(section);
         return res.status(200).send(updated.toTransportJson());
       } catch (error) {
-        return sendAiError(res, error);
+        return sendAiError(req, res, error);
       } finally {
         LlmRequestRelease(user?.id);
       }
@@ -292,7 +292,7 @@ export class SectionsRoutes {
         );
         return res.status(200).send({ text });
       } catch (error) {
-        return sendAiError(res, error);
+        return sendAiError(req, res, error);
       } finally {
         LlmRequestRelease(user?.id);
       }

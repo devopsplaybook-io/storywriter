@@ -4,6 +4,8 @@ import {
   ConcurrencyActive,
   ConcurrencyRelease,
   RateLimitCheck,
+  RateLimitPeek,
+  RateLimitRecordFailure,
   RateLimitResetForTests,
 } from "../utils/RateLimit";
 import {
@@ -52,6 +54,45 @@ describe("RateLimitCheck — fixed window", () => {
     expect(RateLimitCheck("a", 1, 60_000).allowed).toBe(true);
     expect(RateLimitCheck("a", 1, 60_000).allowed).toBe(false);
     expect(RateLimitCheck("b", 1, 60_000).allowed).toBe(true);
+  });
+});
+
+describe("RateLimitPeek / RateLimitRecordFailure — failure-only window", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-10-24T00:00:00.000Z"));
+    RateLimitResetForTests();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("peek never creates or consumes an entry", () => {
+    expect(RateLimitPeek("k", 1, 60_000).allowed).toBe(true);
+    expect(RateLimitPeek("k", 1, 60_000).allowed).toBe(true);
+    RateLimitRecordFailure("k", 60_000);
+    expect(RateLimitPeek("k", 1, 60_000).allowed).toBe(false);
+  });
+
+  it("records failures up to max and reports a retry-after", () => {
+    RateLimitRecordFailure("k", 60_000);
+    RateLimitRecordFailure("k", 60_000);
+    expect(RateLimitPeek("k", 3, 60_000).allowed).toBe(true);
+    RateLimitRecordFailure("k", 60_000);
+    const blocked = RateLimitPeek("k", 3, 60_000);
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.retryAfterSeconds).toBeGreaterThanOrEqual(1);
+    expect(blocked.retryAfterSeconds).toBeLessThanOrEqual(60);
+  });
+
+  it("starts a fresh failure window after windowMs", () => {
+    RateLimitRecordFailure("k", 5_000);
+    expect(RateLimitPeek("k", 1, 5_000).allowed).toBe(false);
+    jest.setSystemTime(new Date("2026-10-24T00:00:05.000Z"));
+    expect(RateLimitPeek("k", 1, 5_000).allowed).toBe(true);
+    RateLimitRecordFailure("k", 5_000);
+    expect(RateLimitPeek("k", 1, 5_000).allowed).toBe(false);
   });
 });
 
@@ -124,13 +165,15 @@ describe("Rate-limited routes", () => {
     RateLimitResetForTests();
   });
 
-  it("throttles login attempts per IP with a Retry-After header", async () => {
+  beforeEach(() => {
+    RateLimitResetForTests();
+  });
+
+  it("throttles failed login attempts per IP + username with a Retry-After header", async () => {
     expect(admin.token).toBeTruthy();
 
-    server.config.RATE_LIMIT_LOGIN_MAX = 4;
+    server.config.RATE_LIMIT_LOGIN_MAX = 3;
     try {
-      // createUser already logged in once, so three bad attempts fill the
-      // window and the fourth is refused.
       for (let i = 0; i < 3; i++) {
         const res = await server.inject(
           "POST",
@@ -157,6 +200,94 @@ describe("Rate-limited routes", () => {
         name: "Still allowed",
       });
       expect(books.statusCode).toBe(201);
+    } finally {
+      server.config.RATE_LIMIT_LOGIN_MAX = 1000;
+      RateLimitResetForTests();
+    }
+  });
+
+  it("does not let one user's failures block another user", async () => {
+    const bob = await server.createUser("rl-bob", "user", admin.token);
+    server.config.RATE_LIMIT_LOGIN_MAX = 2;
+    try {
+      for (let i = 0; i < 2; i++) {
+        const res = await server.inject(
+          "POST",
+          "/api/users/session",
+          undefined,
+          { name: "rl-alice", password: "wrong" },
+        );
+        expect(res.statusCode).toBe(401);
+      }
+      // Alice's failures exhaust only her own budget
+      const aliceBlocked = await server.inject(
+        "POST",
+        "/api/users/session",
+        undefined,
+        { name: "rl-alice", password: "wrong" },
+      );
+      expect(aliceBlocked.statusCode).toBe(429);
+
+      // Bob can still log in from the same (proxy) address
+      const bobLogin = await server.inject(
+        "POST",
+        "/api/users/session",
+        undefined,
+        { name: bob.name, password: "password" },
+      );
+      expect(bobLogin.statusCode).toBe(201);
+    } finally {
+      server.config.RATE_LIMIT_LOGIN_MAX = 1000;
+      RateLimitResetForTests();
+    }
+  });
+
+  it("does not consume the failure budget on successful logins", async () => {
+    const carol = await server.createUser("rl-carol", "user", admin.token);
+    server.config.RATE_LIMIT_LOGIN_MAX = 2;
+    try {
+      const fail = async () =>
+        server.inject("POST", "/api/users/session", undefined, {
+          name: carol.name,
+          password: "wrong",
+        });
+      expect((await fail()).statusCode).toBe(401);
+      const success = await server.inject(
+        "POST",
+        "/api/users/session",
+        undefined,
+        { name: carol.name, password: "password" },
+      );
+      expect(success.statusCode).toBe(201);
+      // Only the two failures count: one more failure is the second
+      expect((await fail()).statusCode).toBe(401);
+      expect((await fail()).statusCode).toBe(429);
+    } finally {
+      server.config.RATE_LIMIT_LOGIN_MAX = 1000;
+      RateLimitResetForTests();
+    }
+  });
+
+  it("ignores X-Forwarded-For when the proxy is not trusted", async () => {
+    server.config.RATE_LIMIT_LOGIN_MAX = 1;
+    try {
+      const first = await server.inject(
+        "POST",
+        "/api/users/session",
+        undefined,
+        { name: "rl-dave", password: "wrong" },
+        { "x-forwarded-for": "203.0.113.10" },
+      );
+      expect(first.statusCode).toBe(401);
+      // A different forwarded address shares the socket-IP budget
+      const second = await server.inject(
+        "POST",
+        "/api/users/session",
+        undefined,
+        { name: "rl-dave", password: "wrong" },
+        { "x-forwarded-for": "203.0.113.11" },
+      );
+      expect(second.statusCode).toBe(429);
     } finally {
       server.config.RATE_LIMIT_LOGIN_MAX = 1000;
       RateLimitResetForTests();
@@ -259,6 +390,62 @@ describe("Rate-limited routes", () => {
         "Daily AI request quota exceeded",
       );
     } finally {
+      RateLimitResetForTests();
+    }
+  });
+});
+
+describe("login throttle behind a trusted proxy", () => {
+  let server: TestServer;
+
+  beforeAll(async () => {
+    server = new TestServer();
+    await server.init({ trustProxy: true });
+  });
+
+  afterAll(async () => {
+    await server.close();
+    RateLimitResetForTests();
+  });
+
+  beforeEach(() => {
+    RateLimitResetForTests();
+  });
+
+  it("keys the throttle on the forwarded client IP when trustProxy is enabled", async () => {
+    await server.createUser("rl-proxy-admin", "admin");
+    server.config.RATE_LIMIT_LOGIN_MAX = 1;
+    try {
+      const first = await server.inject(
+        "POST",
+        "/api/users/session",
+        undefined,
+        { name: "rl-proxy-user", password: "wrong" },
+        { "x-forwarded-for": "203.0.113.20" },
+      );
+      expect(first.statusCode).toBe(401);
+
+      // A different forwarded client has its own budget
+      const second = await server.inject(
+        "POST",
+        "/api/users/session",
+        undefined,
+        { name: "rl-proxy-user", password: "wrong" },
+        { "x-forwarded-for": "203.0.113.21" },
+      );
+      expect(second.statusCode).toBe(401);
+
+      // The original client is now blocked
+      const third = await server.inject(
+        "POST",
+        "/api/users/session",
+        undefined,
+        { name: "rl-proxy-user", password: "wrong" },
+        { "x-forwarded-for": "203.0.113.20" },
+      );
+      expect(third.statusCode).toBe(429);
+    } finally {
+      server.config.RATE_LIMIT_LOGIN_MAX = 1000;
       RateLimitResetForTests();
     }
   });

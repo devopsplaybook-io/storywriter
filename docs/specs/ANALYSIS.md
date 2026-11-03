@@ -18,7 +18,7 @@ LLM-powered book analysis provides AI-generated insights on structure, content q
 - [x] Configured via `LLM_API_KEY`, `LLM_API_URL`, `LLM_MODEL` in `config.json` or environment variables.
 - [x] Defaults: `LLM_API_URL=https://api.deepseek.com/chat/completions`, `LLM_MODEL=deepseek-chat`.
 - [x] LLM calls use retry with exponential backoff (2 retries, 1s/2s/4s delays).
-- [x] Timeouts: 45 seconds per request and a 120-second overall deadline enforced with an `AbortController`; aborted calls surface a clear timeout error.
+- [x] Timeouts: 45 seconds per request and a 120-second overall deadline enforced with an `AbortController`; aborted calls fail with the stable provider error below, and the timeout cause is logged server-side only.
 - [x] **Availability status**: the server exposes whether AI is configured; the UI disables AI features with a clear explanation when no `LLM_API_KEY` is set (instead of failing with a cryptic error).
 - [x] The availability check never exposes the API key and never pings the LLM provider (no token cost).
 - [x] **Concurrency and quota guards**: AI endpoints run at most one request per user at a time and cap the number of AI requests per user per day (`LLM_USER_CONCURRENCY`, `LLM_DAILY_QUOTA`); exceeding either returns HTTP 429 with a clear message.
@@ -37,7 +37,7 @@ LLM-powered book analysis provides AI-generated insights on structure, content q
 - [x] Reports cached before the hash existed fall back to the previous section `dateUpdated` comparison.
 - [x] The analysis viewer shows a "book changed since this analysis was generated" hint when the report is stale.
 - [x] Regeneration keeps the cached report visible under a "Regenerating analysis…" overlay; the full-screen loading state is only shown when no cached report exists.
-- [x] Generation failures are surfaced as errors (HTTP 502 with the message) and are **never cached as report content** — the cache keeps the last good report.
+- [x] Generation failures are surfaced as an error (HTTP 502 with `{ "error": "AI provider request failed" }`) and are **never cached as report content** — the cache keeps the last good report. Provider details (URLs, request ids, response bodies) are logged server-side and never returned to the client.
 
 ## Section-Level Analysis
 
@@ -73,4 +73,4 @@ LLM-powered book analysis provides AI-generated insights on structure, content q
 - [x] Web UI: analysis panel with availability state, regeneration overlay and stale hint in `components/AnalysisViewer.vue`.
 - [x] Web UI: AI Notes tab and AI actions menu in `components/SectionEditor.vue`, markdown rendering via `marked`.
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-25_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-11-02_

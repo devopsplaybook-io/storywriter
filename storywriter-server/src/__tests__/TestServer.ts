@@ -29,6 +29,8 @@ import { LlmClientInit } from "../analysis/LlmClient";
 import { MediaRoutes } from "../media/MediaRoutes";
 import { RegisterSecurityHeaders } from "../SecurityHeaders";
 import { StaticCacheControl } from "../StaticFiles";
+import { RegisterErrorHandler } from "../ErrorHandler";
+import { RegisterCors } from "../Cors";
 
 const SQL_DIR = path.join(__dirname, "../../sql/sqlite");
 
@@ -90,6 +92,12 @@ export async function BuildTarGz(
   return Buffer.concat(chunks);
 }
 
+export interface TestServerOptions {
+  trustProxy?: boolean;
+  corsPolicyOrigin?: string;
+  logger?: false | { level: string; stream: NodeJS.WritableStream };
+}
+
 /**
  * Route-level test harness: a Fastify instance backed by a throwaway SQLite
  * database in a temporary DATA_DIR, with the same routes and prefixes as
@@ -100,7 +108,7 @@ export class TestServer {
   public config: Config;
   public dataDir: string;
 
-  public async init(): Promise<void> {
+  public async init(options: TestServerOptions = {}): Promise<void> {
     this.dataDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "storywriter-test-"),
     );
@@ -111,12 +119,15 @@ export class TestServer {
     this.config.DATABASE_TYPE = "sqlite";
     this.config.JWT_KEY = "test-jwt-key";
     // Route tests log in several users; the login throttle is exercised
-    // explicitly in the RateLimit spec which lowers this knob.
+    // explicitly in the RateLimit spec which lowers this knob. The common-utils
+    // limiter runs on the same route, so it is raised out of the way here.
+    this.config.AUTH_RATE_LIMIT_LOGIN_MAX = 1000;
     this.config.RATE_LIMIT_LOGIN_MAX = 1000;
     this.config.OPENTELEMETRY_COLLECTOR_HTTP_TRACES = "";
     this.config.OPENTELEMETRY_COLLECTOR_HTTP_METRICS = "";
     this.config.OPENTELEMETRY_COLLECTOR_HTTP_LOGS = "";
-    this.config.CORS_POLICY_ORIGIN = "";
+    this.config.CORS_POLICY_ORIGIN = options.corsPolicyOrigin ?? "";
+    this.config.TRUST_PROXY = options.trustProxy === true;
 
     const tracer = new StandardTracer(this.config);
     OTelSetTracer(tracer);
@@ -132,8 +143,13 @@ export class TestServer {
     await BookAnalysisInit(this.config);
     span.end();
 
-    this.app = Fastify({ logger: false });
+    this.app = Fastify({
+      logger: options.logger ?? false,
+      trustProxy: this.config.TRUST_PROXY,
+    });
+    RegisterErrorHandler(this.app);
     RegisterSecurityHeaders(this.app);
+    await RegisterCors(this.app, this.config);
     await this.app.register(fastifyMultipart, {
       limits: { fileSize: 10 * 1024 * 1024 },
     });
@@ -280,12 +296,14 @@ export class TestServer {
   }
 
   public async inject(
-    method: "GET" | "POST" | "PUT" | "DELETE",
+    method: "GET" | "POST" | "PUT" | "DELETE" | "OPTIONS",
     url: string,
     token?: string,
     payload?: unknown,
+    extraHeaders?: Record<string, string>,
+    remoteAddress?: string,
   ) {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { ...extraHeaders };
     if (token) {
       headers.authorization = `Bearer ${token}`;
     }
@@ -294,6 +312,7 @@ export class TestServer {
       url,
       headers,
       payload: payload as any,
+      ...(remoteAddress ? { remoteAddress } : {}),
     });
   }
 
