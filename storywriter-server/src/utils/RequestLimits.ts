@@ -36,7 +36,7 @@ export function LlmRequestRelease(userId: string): void {
 export function LlmLimitMessage(kind: LlmLimitKind): string {
   return kind === "concurrency"
     ? "Another AI request is already running"
-    : "Daily AI request quota exceeded";
+    : "AI request quota exceeded (rolling 24-hour window per user)";
 }
 
 /**

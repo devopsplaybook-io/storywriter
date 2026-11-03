@@ -129,3 +129,55 @@ describe("media store URLs", () => {
     expect(mockedGet).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("media store upload progress", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+  });
+
+  it("reports upload percentages from onUploadProgress", async () => {
+    const mockedPost = vi.mocked(api.post);
+    mockedPost.mockImplementationOnce((async (
+      _url: string,
+      _body: unknown,
+      config: { onUploadProgress?: (event: unknown) => void },
+    ) => {
+      config.onUploadProgress?.({ loaded: 25, total: 100 });
+      config.onUploadProgress?.({ loaded: 100, total: 100 });
+      return { data: { id: "m1", bookId: "b1" } };
+    }) as never);
+
+    const store = useMediaStore();
+    const progress: number[] = [];
+    await store.uploadMedia("b1", {} as File, (percent) =>
+      progress.push(percent),
+    );
+
+    expect(progress).toEqual([25, 100]);
+    expect(store.getMediaForBook("b1")).toHaveLength(1);
+  });
+
+  it("ignores progress events without a total and works without a callback", async () => {
+    const mockedPost = vi.mocked(api.post);
+    mockedPost.mockImplementationOnce((async (
+      _url: string,
+      _body: unknown,
+      config: { onUploadProgress?: (event: unknown) => void },
+    ) => {
+      config.onUploadProgress?.({ loaded: 10, total: 0 });
+      return { data: { id: "m2", bookId: "b1" } };
+    }) as never);
+
+    const store = useMediaStore();
+    const progress: number[] = [];
+    await store.uploadMedia("b1", {} as File, (percent) =>
+      progress.push(percent),
+    );
+    expect(progress).toEqual([]);
+
+    mockedPost.mockResolvedValueOnce({ data: { id: "m3", bookId: "b1" } });
+    await store.uploadMedia("b1", {} as File);
+    expect(store.getMediaForBook("b1")).toHaveLength(2);
+  });
+});

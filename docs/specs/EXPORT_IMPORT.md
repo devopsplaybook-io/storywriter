@@ -14,7 +14,7 @@
 - [x] Import is **atomic**: a failed import leaves no book rows, no media files and no temp directory; invalid archives return `400`
 - [x] Import validation: entry allow-list, extraction limits (count/size/gzip ratio), section tree checks, media MIME/magic-byte/size checks, traversal-safe filenames
 - [x] **Size budgets for manuscript exports**: total section content (title + content + AI notes) is capped at `EXPORT_MAX_CONTENT_BYTES` (default 20 MiB) and total embedded media at `EXPORT_MAX_TOTAL_MEDIA_BYTES` (default 100 MiB); exceeding either returns `413` instead of buffering an unbounded book
-- [x] **Concurrency guard**: exports and imports run at most `IMPORT_EXPORT_CONCURRENCY` (default 2) per user; excess requests return `429`
+- [x] **Concurrency guard**: exports and imports run at most `IMPORT_EXPORT_CONCURRENCY` (default 2) per user; excess requests return `429`. For streamed exports (tar.gz, EPUB) the slot is held until the streamed response completes or fails (stream `close`/`error`, response `finish`/`close`); buffered exports (Markdown, DOCX) and every error path release it immediately. Release is idempotent, so double events cannot leak or double-free a slot.
 - [x] Property labels for `include=full` are gathered with **one bulk query** for the whole book instead of one query per section
 
 ## Archive Format
@@ -151,4 +151,4 @@ POST /api/books/import
 - `marked` — markdown → HTML for the DOCX/EPUB renderers
 - `@turbodocx/html-to-docx` — HTML → DOCX Buffer for the DOCX renderer
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-25_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-11-03_

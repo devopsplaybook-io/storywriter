@@ -10,9 +10,10 @@ import {
   PropertiesDataGetAllSectionValuesForBook,
 } from "../properties/PropertiesData";
 import { MediaDataList } from "../media/MediaData";
+import { OTelLogger } from "../OTelContext";
 import { callLLMWithRetry } from "./LlmClient";
 
-const logger = console;
+const logger = OTelLogger().createModuleLogger("book-analysis");
 
 let config: Config;
 
@@ -29,6 +30,10 @@ export const ANALYSIS_TOTAL_CHAR_BUDGET = 120000;
 // Every non-empty section is guaranteed this much content so thin sections
 // are never crowded out by long ones.
 export const ANALYSIS_SECTION_FLOOR = 1000;
+// Attributes share a smaller slice of the same budget so they cannot crowd out
+// book content, while each non-empty attribute keeps a minimum share.
+export const ANALYSIS_ATTRIBUTE_CHAR_BUDGET = 12000;
+export const ANALYSIS_ATTRIBUTE_FLOOR = 500;
 
 export interface BookAnalysisResult {
   generatedAt: string;
@@ -41,6 +46,8 @@ export interface BookAnalysisResult {
   rawOutput: string | null;
   /** Hash of all content-bearing records at generation time. */
   contentHash?: string;
+  /** Internal book content version at generation time (cheap staleness). */
+  contentVersion?: number;
 }
 
 export async function BookAnalysisGetCached(
@@ -63,22 +70,39 @@ export async function BookAnalysisGetCached(
 /**
  * A cached report is stale when any content-bearing record (book metadata,
  * sections, attributes, properties, property values, media) changed since it
- * was generated. The comparison is a content hash; reports cached before the
- * hash existed fall back to the section dateUpdated comparison.
+ * was generated. Freshness uses the internal book content version; reports
+ * cached before it existed fall back to the content hash and finally to the
+ * legacy section dateUpdated comparison.
  */
 export async function BookAnalysisIsStale(
   bookId: string,
+  book?: { contentVersion?: number } | null,
+  cached?: BookAnalysisResult | null,
 ): Promise<boolean> {
-  const cached = await BookAnalysisGetCached(bookId);
-  if (!cached || !cached.generatedAt) {
+  const report = cached === undefined ? await BookAnalysisGetCached(bookId) : cached;
+  if (!report || !report.generatedAt) {
     return false;
   }
-  if (cached.contentHash) {
+  const currentBook = book === undefined ? await BooksDataGet(bookId) : book;
+  // A numeric version makes the check a constant-time comparison.
+  if (typeof report.contentVersion === "number") {
+    return report.contentVersion !== (currentBook?.contentVersion ?? 1);
+  }
+  if (report.contentHash) {
     const currentHash = await BookAnalysisComputeContentHash(bookId);
-    return currentHash !== cached.contentHash;
+    const stale = currentHash !== report.contentHash;
+    if (!stale) {
+      // Opportunistic upgrade: the next open is cheap. A stale legacy report
+      // is never rewritten; regenerating it writes the version.
+      await BookAnalysisWriteCache(bookId, {
+        ...report,
+        contentVersion: currentBook?.contentVersion ?? 1,
+      });
+    }
+    return stale;
   }
   // Legacy cache without a content hash
-  const generatedAt = Date.parse(cached.generatedAt);
+  const generatedAt = Date.parse(report.generatedAt);
   if (Number.isNaN(generatedAt)) {
     return false;
   }
@@ -128,7 +152,6 @@ export async function BookAnalysisCollectContent(
         mediaId: s.mediaId,
         caption: s.caption,
         orderIndex: s.orderIndex,
-        dateUpdated: s.dateUpdated,
       }))
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     attributes: attributes
@@ -136,7 +159,6 @@ export async function BookAnalysisCollectContent(
         id: a.id,
         title: a.title,
         content: a.content,
-        dateUpdated: a.dateUpdated,
       }))
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     properties: properties
@@ -285,19 +307,10 @@ export async function BookAnalysisGenerate(
     suggestions,
     rawOutput: fullContent || null,
     contentHash,
+    contentVersion: book.contentVersion ?? 1,
   };
 
-  const filePath = getFilePath(bookId);
-  await fs.ensureDir(path.dirname(filePath));
-  // Write atomically: a crash mid-write must never leave a corrupt cache.
-  const tmpPath = `${filePath}.${crypto.randomUUID()}.tmp`;
-  try {
-    await fs.writeJson(tmpPath, result);
-    await fs.rename(tmpPath, filePath);
-  } catch (err) {
-    await fs.remove(tmpPath).catch(() => undefined);
-    throw err;
-  }
+  await BookAnalysisWriteCache(bookId, result);
   logger.info(
     `[BookAnalysis] Analysis generated and cached for book "${book.name}"`,
   );
@@ -315,22 +328,26 @@ export function countWords(text: string): number {
 }
 
 /**
- * Split the total character budget across sections: every non-empty section
- * gets a floor first, the remainder is distributed proportionally to content
- * length. Returns one budget per input length (0 for empty sections).
+ * Split a budget across entries: every non-empty entry gets a floor first, the
+ * remainder is distributed proportionally to content length. Returns one budget
+ * per input length (0 for empty entries).
  */
-export function allocateContentBudgets(lengths: number[]): number[] {
+export function allocateContentBudgets(
+  lengths: number[],
+  totalBudget: number = ANALYSIS_TOTAL_CHAR_BUDGET,
+  floor: number = ANALYSIS_SECTION_FLOOR,
+): number[] {
   const nonEmpty = lengths.map((len) => Math.max(0, len));
   const totalLength = nonEmpty.reduce((sum, len) => sum + len, 0);
-  if (totalLength <= ANALYSIS_TOTAL_CHAR_BUDGET) {
+  if (totalLength <= totalBudget) {
     return nonEmpty;
   }
-  const base = nonEmpty.map((len) => Math.min(len, ANALYSIS_SECTION_FLOOR));
+  const base = nonEmpty.map((len) => Math.min(len, floor));
   const baseSum = base.reduce((sum, len) => sum + len, 0);
-  const remaining = ANALYSIS_TOTAL_CHAR_BUDGET - baseSum;
+  const remaining = totalBudget - baseSum;
   if (remaining <= 0) {
     // The floors alone exhaust the budget: scale them down proportionally.
-    const scale = ANALYSIS_TOTAL_CHAR_BUDGET / baseSum;
+    const scale = totalBudget / baseSum;
     return base.map((len) => Math.floor(len * scale));
   }
   return nonEmpty.map((len, i) =>
@@ -357,17 +374,44 @@ export function buildPrompt(
   const rootSection = sections.find((s) => s.parentId === null);
   const nonRootSections = sections.filter((s) => s.parentId !== null);
 
-  // Budget the whole content across sections instead of clipping each one
-  const budgets = allocateContentBudgets(sections.map((s) => s.content.length));
+  // Attributes get their own share of the total budget, and the remainder is
+  // budgeted across sections so the assembled prompt never exceeds the limit.
+  const attributeBudgets = allocateContentBudgets(
+    attributes.map((a) => a.content.length),
+    ANALYSIS_ATTRIBUTE_CHAR_BUDGET,
+    ANALYSIS_ATTRIBUTE_FLOOR,
+  );
+  const attributeBudgetTotal = attributeBudgets.reduce(
+    (sum, budget) => sum + budget,
+    0,
+  );
+  const budgets = allocateContentBudgets(
+    sections.map((s) => s.content.length),
+    ANALYSIS_TOTAL_CHAR_BUDGET - attributeBudgetTotal,
+  );
   const budgetById = new Map<string, number>();
   sections.forEach((s, i) => budgetById.set(s.id, budgets[i]));
 
+  // Group children by parent once, sort each list once, then walk the map
+  // linearly instead of filtering the whole section list per node.
+  const childrenByParent = new Map<
+    string | null,
+    typeof sections
+  >();
+  for (const section of sections) {
+    const children = childrenByParent.get(section.parentId) || [];
+    children.push(section);
+    childrenByParent.set(section.parentId, children);
+  }
+  for (const children of childrenByParent.values()) {
+    children.sort((a, b) => a.orderIndex - b.orderIndex);
+  }
+
   // Build a tree representation
   function buildTree(parentId: string | null, depth: number): string {
-    const children = sections.filter((s) => s.parentId === parentId);
+    const children = childrenByParent.get(parentId) || [];
     if (children.length === 0) return "";
     return children
-      .sort((a, b) => a.orderIndex - b.orderIndex)
       .map((s) => {
         const indent = "  ".repeat(depth);
         const budget = budgetById.get(s.id) || 0;
@@ -392,10 +436,17 @@ export function buildPrompt(
   const attrText =
     attributes.length > 0
       ? attributes
-          .map(
-            (a) =>
-              `### ${a.title}\n${a.content.substring(0, 500)}${a.content.length > 500 ? "..." : ""}`,
-          )
+          .map((a, i) => {
+            if (!a.content) {
+              return `### ${a.title}`;
+            }
+            const budget = attributeBudgets[i];
+            const content =
+              a.content.length > budget
+                ? `${a.content.substring(0, budget)}… (truncated, ${countWords(a.content)} words total)`
+                : a.content;
+            return `### ${a.title}\n${content}`;
+          })
           .join("\n\n")
       : "(no attributes defined)";
 
@@ -432,6 +483,23 @@ ${propDefs}
 
 function getFilePath(bookId: string): string {
   return path.join(config.DATA_DIR, `book-analysis-${bookId}.json`);
+}
+
+/** Write a report atomically: a crash mid-write must never leave a corrupt cache. */
+export async function BookAnalysisWriteCache(
+  bookId: string,
+  result: BookAnalysisResult,
+): Promise<void> {
+  const filePath = getFilePath(bookId);
+  await fs.ensureDir(path.dirname(filePath));
+  const tmpPath = `${filePath}.${crypto.randomUUID()}.tmp`;
+  try {
+    await fs.writeJson(tmpPath, result);
+    await fs.rename(tmpPath, filePath);
+  } catch (err) {
+    await fs.remove(tmpPath).catch(() => undefined);
+    throw err;
+  }
 }
 
 /**

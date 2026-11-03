@@ -14,6 +14,8 @@ import {
   PropertiesDataSetSectionValue,
   PropertiesDataUpdate,
 } from "./PropertiesData";
+import { DbUtilsTransaction } from "../utils/DbTransaction";
+import { BookContentVersionBump } from "../books/BookContentVersion";
 
 export class PropertiesRoutes {
   public async getRoutes(fastify: FastifyInstance): Promise<void> {
@@ -44,7 +46,10 @@ export class PropertiesRoutes {
       property.bookId = req.body.bookId;
       property.name = req.body.name;
       property.options = req.body.options || [];
-      await PropertiesDataAdd(property);
+      await DbUtilsTransaction(async () => {
+        await PropertiesDataAdd(property);
+        await BookContentVersionBump(property.bookId);
+      });
       return res.status(201).send(property.toTransportJson());
     });
 
@@ -60,15 +65,31 @@ export class PropertiesRoutes {
       }
       if (!(await CheckBookAccess(req, res, property.bookId, "write"))) return;
       const previousOptions = property.options;
+      const previousName = property.name;
+      const previousType = property.type;
       if (req.body.name !== undefined) property.name = req.body.name;
       if (req.body.options !== undefined) property.options = req.body.options;
-      await PropertiesDataUpdate(property);
-      // Options were narrowed: remove assignments for removed types
-      if (
-        req.body.options !== undefined &&
-        req.body.options.length !== previousOptions.length
-      ) {
-        await PropertiesDataCleanupSectionValues(property.id, property.options);
+      const changed =
+        property.name !== previousName ||
+        property.type !== previousType ||
+        JSON.stringify(property.options) !== JSON.stringify(previousOptions);
+      if (changed) {
+        await DbUtilsTransaction(async () => {
+          await PropertiesDataUpdate(property);
+          // Options were narrowed: remove assignments for removed types
+          if (
+            req.body.options !== undefined &&
+            req.body.options.length !== previousOptions.length
+          ) {
+            await PropertiesDataCleanupSectionValues(
+              property.id,
+              property.options,
+            );
+          }
+          await BookContentVersionBump(property.bookId);
+        });
+      } else {
+        await PropertiesDataUpdate(property);
       }
       return res.status(200).send(property.toTransportJson());
     });
@@ -83,7 +104,10 @@ export class PropertiesRoutes {
         return res.status(404).send({ error: "Property Not Found" });
       }
       if (!(await CheckBookAccess(req, res, property.bookId, "write"))) return;
-      await PropertiesDataDelete(req.params.id);
+      await DbUtilsTransaction(async () => {
+        await PropertiesDataDelete(req.params.id);
+        await BookContentVersionBump(property.bookId);
+      });
       return res.status(200).send({});
     });
 
@@ -140,11 +164,28 @@ export class PropertiesRoutes {
           .status(400)
           .send({ error: "Property and section are in different books" });
       }
-      await PropertiesDataSetSectionValue(
+      const currentValues = await PropertiesDataGetSectionValues(
         req.params.sectionId,
-        req.body.propertyId,
-        req.body.value,
       );
+      const current = currentValues.find(
+        (v) => v.propertyId === req.body.propertyId,
+      );
+      if (!current || current.value !== req.body.value) {
+        await DbUtilsTransaction(async () => {
+          await PropertiesDataSetSectionValue(
+            req.params.sectionId,
+            req.body.propertyId,
+            req.body.value,
+          );
+          await BookContentVersionBump(section.bookId);
+        });
+      } else {
+        await PropertiesDataSetSectionValue(
+          req.params.sectionId,
+          req.body.propertyId,
+          req.body.value,
+        );
+      }
       return res.status(200).send({});
     });
 
@@ -169,10 +210,26 @@ export class PropertiesRoutes {
             .status(400)
             .send({ error: "Property and section are in different books" });
         }
-        await PropertiesDataRemoveSectionValue(
+        const currentValues = await PropertiesDataGetSectionValues(
           req.params.sectionId,
-          req.params.propertyId,
         );
+        const exists = currentValues.some(
+          (v) => v.propertyId === req.params.propertyId,
+        );
+        if (exists) {
+          await DbUtilsTransaction(async () => {
+            await PropertiesDataRemoveSectionValue(
+              req.params.sectionId,
+              req.params.propertyId,
+            );
+            await BookContentVersionBump(section.bookId);
+          });
+        } else {
+          await PropertiesDataRemoveSectionValue(
+            req.params.sectionId,
+            req.params.propertyId,
+          );
+        }
         return res.status(200).send({});
       },
     );

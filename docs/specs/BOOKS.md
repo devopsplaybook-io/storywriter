@@ -39,6 +39,7 @@ Books are the top-level organizational unit in Storywriter. Each book represents
 - [x] Access grants are stored in the `book_access` table (composite key: bookId + userId).
 - [x] SQLite UPSERT correctly uses 4 `?` parameters; PostgreSQL reuses `$N` numbered parameters.
 - [x] Book list/detail responses include `ownerId` and the caller's `permission` (`admin`/`owner`/`write`/`read`/null).
+- [x] Books carry an internal `contentVersion` counter (migration `init-0010`, default 1). Every content-bearing write bumps it in the same transaction as the write — book metadata, sections (create/update/delete/move/copy/reorder), AI notes, attributes, property definitions and values, media add/update/delete, imports and version restores. No-op saves do not bump it. The field is **not** exposed in transport JSON (API contract unchanged); it is used to detect stale book analysis without re-reading the book. Future write paths must keep bumping it.
 - [x] Book version **list and metadata responses omit the heavy `snapshot`** (the queries select metadata plus the snapshot `size` only); clients fetch the payload from the read-checked `GET /api/books/:id/versions/:versionId/snapshot` or restore via POST.
 
 ## Version Snapshots

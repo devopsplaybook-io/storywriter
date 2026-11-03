@@ -54,11 +54,10 @@ import {
   VersionsDataCreate,
   VersionsDataRestore,
 } from "../versions/VersionsData";
-import {
-  ImportExportAcquire,
-  ImportExportRelease,
-} from "../utils/RequestLimits";
+import { ImportExportAcquire, ImportExportRelease } from "../utils/RequestLimits";
 import { DbUtilsTransaction } from "../utils/DbTransaction";
+import { BookContentVersionBump } from "./BookContentVersion";
+import { AttachReleaseOnCompletion } from "./ExportStreamRelease";
 
 function SafeExportFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9-_]/g, "_");
@@ -195,6 +194,11 @@ export class BooksRoutes {
       if (!(await CheckBookAccess(req, res, req.params.id, "write", book)))
         return;
 
+      const previous = {
+        name: book.name,
+        description: book.description,
+        writingGoal: book.writingGoal,
+      };
       if (req.body.name !== undefined) book.name = req.body.name;
       if (req.body.description !== undefined)
         book.description = req.body.description;
@@ -203,7 +207,18 @@ export class BooksRoutes {
           0,
           Math.floor(Number(req.body.writingGoal) || 0),
         );
-      await BooksDataUpdate(book);
+      const changed =
+        book.name !== previous.name ||
+        book.description !== previous.description ||
+        book.writingGoal !== previous.writingGoal;
+      if (changed) {
+        await DbUtilsTransaction(async () => {
+          await BooksDataUpdate(book);
+          await BookContentVersionBump(book.id);
+        });
+      } else {
+        await BooksDataUpdate(book);
+      }
       const permission = await BookAccessGet(req, book, user);
       return res.status(200).send({ ...book.toTransportJson(), permission });
     });
@@ -423,6 +438,16 @@ export class BooksRoutes {
           error: "Too many import/export operations, try again shortly",
         });
       }
+      // Buffered exports release in finally; a streamed response keeps the
+      // slot until the transfer completes (or fails).
+      let released = false;
+      const release = () => {
+        if (!released) {
+          released = true;
+          ImportExportRelease(user?.id);
+        }
+      };
+      let streamed = false;
       try {
         if (format === "targz") {
           // Build the archive fully before touching the response: if the
@@ -449,6 +474,8 @@ export class BooksRoutes {
             req.log.error(`Export stream failed: ${err.message}`);
             res.raw.destroy();
           });
+          AttachReleaseOnCompletion(stream, res, release);
+          streamed = true;
           return res.send(stream);
         }
 
@@ -584,6 +611,8 @@ export class BooksRoutes {
           req.log.error(`Export stream failed: ${err.message}`);
           res.raw.destroy();
         });
+        AttachReleaseOnCompletion(stream, res, release);
+        streamed = true;
         return res.send(stream);
       } catch (err) {
         if (err instanceof ManuscriptTooLargeError) {
@@ -594,7 +623,9 @@ export class BooksRoutes {
         req.log.error(err);
         return res.status(500).send({ error: "Export failed" });
       } finally {
-        ImportExportRelease(user?.id);
+        if (!streamed) {
+          release();
+        }
       }
     });
 

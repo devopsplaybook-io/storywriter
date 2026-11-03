@@ -17,23 +17,28 @@ LLM-powered book analysis provides AI-generated insights on structure, content q
 - [x] Uses any OpenAI-compatible chat completions API (DeepSeek, OpenAI, etc.).
 - [x] Configured via `LLM_API_KEY`, `LLM_API_URL`, `LLM_MODEL` in `config.json` or environment variables.
 - [x] Defaults: `LLM_API_URL=https://api.deepseek.com/chat/completions`, `LLM_MODEL=deepseek-chat`.
-- [x] LLM calls use retry with exponential backoff (2 retries, 1s/2s/4s delays).
+- [x] LLM calls use retry with backoff: 3 attempts total (2 retries) after 1 s and 2 s. Sleeps are abort-aware and never run past the 120-second overall deadline; once aborted or out of budget, no further attempt starts. Non-retryable responses (a defined 4xx status other than 429) fail immediately.
 - [x] Timeouts: 45 seconds per request and a 120-second overall deadline enforced with an `AbortController`; aborted calls fail with the stable provider error below, and the timeout cause is logged server-side only.
 - [x] **Availability status**: the server exposes whether AI is configured; the UI disables AI features with a clear explanation when no `LLM_API_KEY` is set (instead of failing with a cryptic error).
 - [x] The availability check never exposes the API key and never pings the LLM provider (no token cost).
-- [x] **Concurrency and quota guards**: AI endpoints run at most one request per user at a time and cap the number of AI requests per user per day (`LLM_USER_CONCURRENCY`, `LLM_DAILY_QUOTA`); exceeding either returns HTTP 429 with a clear message.
+- [x] **Concurrency and quota guards**: AI endpoints run at most one request per user at a time (`LLM_USER_CONCURRENCY`). `LLM_DAILY_QUOTA` is a rolling 24-hour fixed window per user: the window starts at the first counted request, lives in process memory, resets when the server restarts and is independent per replica. Attempts are counted at admission, so failed generations also count. Exceeding either guard returns HTTP 429; the quota message is `AI request quota exceeded (rolling 24-hour window per user)`.
+- [x] All AI modules log through the OTel module logger (`llm-client`, `book-analysis`, `section-analysis`), so retries and provider failures stay correlated with request traces.
 
 ## Book Analysis Input
 
 - [x] The prompt includes the **whole book content** under a global character budget (~120,000 chars ≈ 30k tokens) instead of clipping every section to a fixed snippet.
 - [x] Every non-empty section is guaranteed a minimum share of the budget (~1,000 chars); the remainder is distributed proportionally to content length.
+- [x] Attributes share one global budget (~12,000 chars) carved out of that same total; every non-empty attribute is guaranteed ~500 chars, and truncated attributes are marked `(truncated, N words total)`. Section content and attribute text together never exceed the character budget.
 - [x] Truncated sections are marked `(truncated, N words total)` in the prompt.
 - [x] Each section line in the prompt carries its **word count**, and the statistics block reports the total word count.
 - [x] Section property values are gathered with **one bulk query** for the whole book and are listed with their **real property names** (falling back to the id for undefined properties).
+- [x] The section tree is built with one `parentId → children` map, sorted once, then walked linearly rather than filtering the full section list per node.
 
 ## Report Freshness & Errors
 
-- [x] The cached report carries a **content hash** (sha256 over every content-bearing record: book metadata, sections, attributes, property definitions, property values, media). The report is stale when the recomputed hash differs — so any change to any of those records invalidates it, while non-content changes (e.g. a revision bump) do not.
+- [x] Each book carries an internal `contentVersion` that every content-bearing write bumps in the same transaction (book metadata, sections, attributes, property definitions and values, media add/update/delete, import and version restore). The cached report stores the version at generation time, so staleness is a constant-time version comparison and opening the panel never re-reads the book.
+- [x] Writes that change nothing do not bump the version: no-op saves keep the report fresh.
+- [x] Reports cached before `contentVersion` existed fall back to the **content hash** (sha256 over content-bearing fields only — `dateUpdated` is excluded, so revision-style saves do not flip it). A fresh legacy report is upgraded in place with the current version once; a stale one is left untouched until regenerated.
 - [x] Reports cached before the hash existed fall back to the previous section `dateUpdated` comparison.
 - [x] The analysis viewer shows a "book changed since this analysis was generated" hint when the report is stale.
 - [x] Regeneration keeps the cached report visible under a "Regenerating analysis…" overlay; the full-screen loading state is only shown when no cached report exists.
@@ -65,7 +70,8 @@ LLM-powered book analysis provides AI-generated insights on structure, content q
 
 ## Implementation
 
-- [x] Server module: `src/analysis/BookAnalysis.ts` — data gathering, prompt building, LLM call, caching.
+- [x] Server module: `src/analysis/BookAnalysis.ts` — data gathering, prompt building, LLM call, caching, version-based staleness.
+- [x] Server module: `src/books/BookContentVersion.ts` — bumps the internal book content version inside the caller's transaction.
 - [x] Server routes: `src/analysis/BookAnalysisRoutes.ts` — GET/POST endpoints.
 - [x] Server module: `src/analysis/LlmClient.ts` — shared LLM call with retry and availability helpers.
 - [x] Server routes: `src/analysis/LlmRoutes.ts` — availability status endpoint.

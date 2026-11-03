@@ -188,7 +188,7 @@ function closeVersionView() {
 function loadVersionSections() {
   if (!parsedSnapshot.value) return;
   // Replace sections store with version snapshot sections
-  sectionsStore.sections = parsedSnapshot.value.sections || [];
+  sectionsStore.setSections(parsedSnapshot.value.sections || []);
   emit("load-version", viewingVersion.value.id);
 }
 

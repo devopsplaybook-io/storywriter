@@ -96,6 +96,7 @@ Sections are the structural building blocks of a book. They form a hierarchical 
 - [x] The web client sends the stored revision with every save. On a `409` it refreshes the book's sections and **retries automatically**: the initial attempt plus up to **2 retries**, each rebuilt with the fresh revision, so a concurrent save no longer needs manual action. A failed retry shows a short toast; a final `409` keeps the local draft and asks the author to reload before trying again. Saves are serialized per section, so an older payload can never land after a newer one.
 - [x] A **live word count** for the section (markdown stripped) is shown in the editor header and updates per keystroke.
 - [x] The sidebar shows the **running word total for the book**, live between autosave ticks; when a writing goal is set it shows the target, the percentage and a progress bar.
+- [x] Word counts are maintained **incrementally per section**: typing only recounts the edited section (and sections added/updated/removed), and the book total is their sum. The result is identical to a full recomputation with `countWords`/`countBookWords`.
 - [x] **Focus mode** collapses the sidebar, book nav and global header for distraction-free writing (centered measure); toggled via the editor button or Ctrl/Cmd+Shift+F, exits with Escape; an optional typewriter-scrolling preference persists in localStorage.
 - [x] A compact **formatting toolbar** (bold, italic, heading, lists, quote, inline code, link, image) inserts markdown around the selection and keeps focus.
 - [x] Keyboard shortcuts in the editor: Ctrl/Cmd+B (bold), Ctrl/Cmd+I (italic), Ctrl/Cmd+K (link), Ctrl/Cmd+F (find & replace).
@@ -104,6 +105,7 @@ Sections are the structural building blocks of a book. They form a hierarchical 
 ## Restructuring
 
 - [x] Sections can be restructured by drag-and-drop in the tree: dropping on a container moves the section under it; dropping between siblings reorders it.
+- [x] Reordering siblings sends **one bulk request** (`PUT /api/sections/reorder` with `{ parentId, sectionIds }`). The server requires write access to the parent's book, requires `sectionIds` to be an exact permutation of the current children, applies all `orderIndex` values in one transaction and bumps the book `contentVersion` once; no-op reorders write nothing. The per-section `PUT /api/sections/:id/order` endpoint remains for compatibility.
 - [x] The root section cannot be moved, and a section cannot be moved into its own subtree.
 - [x] A tree node context menu (also via right-click) offers rename, duplicate, move to… and delete.
 - [x] Duplicating a section copies it with its whole subtree, keeping type, media, caption and the section-type labels of every copied section; the copy is inserted right after the original.

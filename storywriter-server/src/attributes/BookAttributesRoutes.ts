@@ -8,6 +8,8 @@ import {
   BookAttributesDataListByBook,
   BookAttributesDataUpdate,
 } from "./BookAttributesData";
+import { DbUtilsTransaction } from "../utils/DbTransaction";
+import { BookContentVersionBump } from "../books/BookContentVersion";
 
 export class BookAttributesRoutes {
   public async getRoutes(fastify: FastifyInstance): Promise<void> {
@@ -48,7 +50,10 @@ export class BookAttributesRoutes {
       attr.bookId = req.body.bookId;
       attr.title = req.body.title || "New Attribute";
       attr.content = req.body.content || "";
-      await BookAttributesDataAdd(attr);
+      await DbUtilsTransaction(async () => {
+        await BookAttributesDataAdd(attr);
+        await BookContentVersionBump(attr.bookId);
+      });
       return res.status(201).send(attr.toTransportJson());
     });
 
@@ -63,9 +68,19 @@ export class BookAttributesRoutes {
         return res.status(404).send({ error: "Attribute Not Found" });
       }
       if (!(await CheckBookAccess(req, res, attr.bookId, "write"))) return;
+      const previous = { title: attr.title, content: attr.content };
       if (req.body.title !== undefined) attr.title = req.body.title;
       if (req.body.content !== undefined) attr.content = req.body.content;
-      await BookAttributesDataUpdate(attr);
+      const changed =
+        attr.title !== previous.title || attr.content !== previous.content;
+      if (changed) {
+        await DbUtilsTransaction(async () => {
+          await BookAttributesDataUpdate(attr);
+          await BookContentVersionBump(attr.bookId);
+        });
+      } else {
+        await BookAttributesDataUpdate(attr);
+      }
       return res.status(200).send(attr.toTransportJson());
     });
 
@@ -79,7 +94,10 @@ export class BookAttributesRoutes {
         return res.status(404).send({ error: "Attribute Not Found" });
       }
       if (!(await CheckBookAccess(req, res, attr.bookId, "write"))) return;
-      await BookAttributesDataDelete(req.params.id);
+      await DbUtilsTransaction(async () => {
+        await BookAttributesDataDelete(req.params.id);
+        await BookContentVersionBump(attr.bookId);
+      });
       return res.status(200).send({});
     });
   }

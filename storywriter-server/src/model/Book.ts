@@ -13,6 +13,10 @@ export class Book {
     book.description = (json.description as string) || "";
     book.dateCreated = (json.dateCreated as string) || new Date().toISOString();
     book.writingGoal = Math.max(0, Math.floor(Number(json.writingGoal) || 0));
+    book.contentVersion = Math.max(
+      1,
+      Math.floor(Number(json.contentVersion) || 1),
+    );
     book.ownerId = (json.ownerId as string) || null;
     return book;
   }
@@ -22,6 +26,7 @@ export class Book {
   public description: string;
   public dateCreated: string;
   public writingGoal: number;
+  public contentVersion: number;
   public ownerId: string | null;
 
   constructor() {
@@ -29,6 +34,7 @@ export class Book {
     this.description = "";
     this.dateCreated = new Date().toISOString();
     this.writingGoal = 0;
+    this.contentVersion = 1;
     this.ownerId = null;
   }
 
@@ -39,6 +45,7 @@ export class Book {
       description: this.description,
       dateCreated: this.dateCreated,
       writingGoal: this.writingGoal,
+      contentVersion: this.contentVersion,
       ownerId: this.ownerId,
     };
   }

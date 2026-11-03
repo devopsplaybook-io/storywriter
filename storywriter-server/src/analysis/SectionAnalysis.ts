@@ -8,8 +8,9 @@ import {
 } from "../properties/PropertiesData";
 import { callLLMWithRetry, LlmIsAvailable } from "./LlmClient";
 import { countWords } from "./BookAnalysis";
+import { OTelLogger } from "../OTelContext";
 
-const logger = console;
+const logger = OTelLogger().createModuleLogger("section-analysis");
 
 export const SECTION_ANALYSIS_TOTAL_CHAR_BUDGET = 120000;
 

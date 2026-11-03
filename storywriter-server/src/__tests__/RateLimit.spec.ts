@@ -146,7 +146,9 @@ describe("LlmRequestAcquire — concurrency and daily quota", () => {
     expect(LlmLimitMessage("concurrency")).toBe(
       "Another AI request is already running",
     );
-    expect(LlmLimitMessage("quota")).toBe("Daily AI request quota exceeded");
+    expect(LlmLimitMessage("quota")).toBe(
+      "AI request quota exceeded (rolling 24-hour window per user)",
+    );
   });
 });
 
@@ -387,7 +389,7 @@ describe("Rate-limited routes", () => {
       );
       expect(blocked.statusCode).toBe(429);
       expect(JSON.parse(blocked.body).error).toBe(
-        "Daily AI request quota exceeded",
+        "AI request quota exceeded (rolling 24-hour window per user)",
       );
     } finally {
       RateLimitResetForTests();

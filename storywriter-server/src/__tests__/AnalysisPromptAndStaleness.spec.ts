@@ -92,6 +92,7 @@ function seedBookFixtures(overrides: {
     description: "A test book",
     writingGoal: 1000,
     dateCreated: "2026-10-16T00:00:00.000Z",
+    contentVersion: 1,
   });
   sectionsDataListByBookMock.mockResolvedValue([
     {
@@ -332,5 +333,47 @@ describe("BookAnalysis — generate caches the content hash", () => {
       tmpPath,
       expect.stringMatching(/book-analysis-book-1\.json$/),
     );
+  });
+
+  it("stores the book content version so repeat opens need no full read", async () => {
+    const result = await BookAnalysisGenerate("book-1");
+    expect(result.contentVersion).toBe(1);
+
+    const cached = fsMock.writeJson.mock.calls[0][1];
+    sectionsDataListByBookMock.mockClear();
+    booksDataGetMock.mockClear();
+
+    expect(
+      await BookAnalysisIsStale("book-1", { contentVersion: 1 }, cached),
+    ).toBe(false);
+    expect(booksDataGetMock).not.toHaveBeenCalled();
+    expect(sectionsDataListByBookMock).not.toHaveBeenCalled();
+  });
+
+  it("upgrades a fresh legacy hash-only cache with the current version", async () => {
+    const hash = await BookAnalysisComputeContentHash("book-1");
+    fsMock.writeJson.mockClear();
+
+    fsMock.pathExists.mockResolvedValue(true);
+    fsMock.readJson.mockResolvedValue({
+      generatedAt: "2026-10-16T12:00:00.000Z",
+      contentHash: hash,
+    });
+
+    expect(await BookAnalysisIsStale("book-1")).toBe(false);
+    expect(fsMock.writeJson).toHaveBeenCalledTimes(1);
+    expect(fsMock.writeJson.mock.calls[0][1].contentVersion).toBe(1);
+    expect(fsMock.writeJson.mock.calls[0][0]).toMatch(/\.tmp$/);
+  });
+
+  it("never rewrites a stale legacy hash-only cache", async () => {
+    fsMock.pathExists.mockResolvedValue(true);
+    fsMock.readJson.mockResolvedValue({
+      generatedAt: "2026-10-16T12:00:00.000Z",
+      contentHash: "0".repeat(64),
+    });
+
+    expect(await BookAnalysisIsStale("book-1")).toBe(true);
+    expect(fsMock.writeJson).not.toHaveBeenCalled();
   });
 });
