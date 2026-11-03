@@ -22,6 +22,7 @@ import {
   MediaDataClearSectionReferences,
 } from "./MediaData";
 import { DbUtilsTransaction } from "../utils/DbTransaction";
+import { BookContentVersionBump } from "../books/BookContentVersion";
 
 // Raster images can be shown inline; SVG can contain scripts so it is always
 // offered as a download. All responses carry nosniff.
@@ -184,7 +185,10 @@ export class MediaRoutes {
 
       // Save metadata to DB; a failed insert must not leave an orphaned file
       try {
-        await MediaDataAdd(media);
+        await DbUtilsTransaction(async () => {
+          await MediaDataAdd(media);
+          await BookContentVersionBump(bookId);
+        });
       } catch (err) {
         await fs.rm(mediaDir, { recursive: true, force: true }).catch(() => undefined);
         req.log.error(
@@ -233,7 +237,12 @@ export class MediaRoutes {
         return res.status(409).send({ error: "Slug already exists" });
       }
 
-      await MediaDataUpdate(id, { slug: sanitizedSlug });
+      if (media.slug !== sanitizedSlug) {
+        await DbUtilsTransaction(async () => {
+          await MediaDataUpdate(id, { slug: sanitizedSlug });
+          await BookContentVersionBump(bookId);
+        });
+      }
       const updated = await MediaDataGet(id);
       return res.status(200).send(updated);
     });
@@ -256,6 +265,7 @@ export class MediaRoutes {
       await DbUtilsTransaction(async () => {
         await MediaDataClearSectionReferences(bookId, id);
         await MediaDataDelete(id);
+        await BookContentVersionBump(bookId);
       });
 
       // Server-generated ids only; a hostile id or filename must never escape

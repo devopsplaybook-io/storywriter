@@ -1,4 +1,6 @@
 import { TestServer, TestUser } from "../__tests__/TestServer";
+import * as http from "http";
+import { ConcurrencyActive, RateLimitResetForTests } from "../utils/RateLimit";
 
 jest.mock("../properties/PropertiesData", () => {
   const actual = jest.requireActual("../properties/PropertiesData");
@@ -74,5 +76,82 @@ describe("Book creation transaction", () => {
     expect(
       await server.query("SELECT id FROM books WHERE name = ?", ["Partial Book"]),
     ).toHaveLength(0);
+  });
+});
+
+describe("Book export stream slot", () => {
+  let server: TestServer;
+  let admin: TestUser;
+  let user: TestUser;
+  let bookId: string;
+
+  beforeAll(async () => {
+    server = new TestServer();
+    await server.init();
+    admin = await server.createUser("admin");
+    user = await server.createUser("export-slot-user", "user", admin.token);
+    const book = await server.createBook(user.token, "Export Slot Book");
+    bookId = book.id;
+    server.config.IMPORT_EXPORT_CONCURRENCY = 1;
+  });
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  afterEach(() => {
+    RateLimitResetForTests();
+  });
+
+  it("releases the slot when the streamed response completes", async () => {
+    const first = await server.inject(
+      "GET",
+      `/api/books/${bookId}/export?format=targz`,
+      user.token,
+    );
+    expect(first.statusCode).toBe(200);
+    expect(ConcurrencyActive(`import-export:${user.id}`)).toBe(0);
+
+    // With a single slot, only a released export allows the next one.
+    const second = await server.inject(
+      "GET",
+      `/api/books/${bookId}/export?format=targz`,
+      user.token,
+    );
+    expect(second.statusCode).toBe(200);
+    expect(ConcurrencyActive(`import-export:${user.id}`)).toBe(0);
+  });
+
+  it("releases the slot when the client aborts the stream", async () => {
+    await server.app.listen({ port: 0, host: "127.0.0.1" });
+    const address = server.app.server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+
+    await new Promise<void>((resolve) => {
+      const req = http.get(
+        {
+          port,
+          path: `/api/books/${bookId}/export?format=targz`,
+          headers: { authorization: `Bearer ${user.token}` },
+        },
+        (res) => {
+          res.once("data", () => {
+            req.destroy();
+            resolve();
+          });
+          res.once("end", () => resolve());
+          res.resume();
+        },
+      );
+      req.on("error", () => resolve());
+    });
+
+    for (let i = 0; i < 100; i++) {
+      if (ConcurrencyActive(`import-export:${user.id}`) === 0) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(ConcurrencyActive(`import-export:${user.id}`)).toBe(0);
   });
 });

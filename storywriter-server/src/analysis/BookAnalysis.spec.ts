@@ -48,8 +48,11 @@ jest.mock("./LlmClient", () => ({
 }));
 
 import {
+  ANALYSIS_ATTRIBUTE_CHAR_BUDGET,
+  ANALYSIS_ATTRIBUTE_FLOOR,
   ANALYSIS_SECTION_FLOOR,
   ANALYSIS_TOTAL_CHAR_BUDGET,
+  BookAnalysisComputeContentHash,
   BookAnalysisGenerate,
   BookAnalysisInit,
   BookAnalysisIsStale,
@@ -105,6 +108,7 @@ function seedBook() {
     name: "My Book",
     description: "A test book",
     dateCreated: "2026-10-16T00:00:00.000Z",
+    contentVersion: 1,
   });
   propertiesDataGetAllSectionValuesMock.mockResolvedValue([]);
   propertiesDataListByBookMock.mockResolvedValue([]);
@@ -160,6 +164,20 @@ describe("BookAnalysis — budget helpers", () => {
     expect(budgets.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(
       ANALYSIS_TOTAL_CHAR_BUDGET,
     );
+  });
+
+  it("honours a custom total budget and floor", () => {
+    const budgets = allocateContentBudgets(
+      [5000, 5000, 5000],
+      ANALYSIS_ATTRIBUTE_CHAR_BUDGET,
+      ANALYSIS_ATTRIBUTE_FLOOR,
+    );
+    expect(budgets.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(
+      ANALYSIS_ATTRIBUTE_CHAR_BUDGET,
+    );
+    for (const budget of budgets) {
+      expect(budget).toBeGreaterThanOrEqual(ANALYSIS_ATTRIBUTE_FLOOR);
+    }
   });
 });
 
@@ -225,6 +243,79 @@ describe("BookAnalysis — buildPrompt", () => {
     expect(prompt).toContain("Aria, a cartographer.");
     expect(prompt).toContain("Status=Draft");
     expect(prompt).toContain("- Status (text)");
+  });
+
+  it("caps attributes globally and keeps sections within the total budget", () => {
+    const marker = "q";
+    const attributes = Array.from({ length: 40 }, (_, i) => ({
+      title: `Attr ${i}`,
+      content: `ATTR-${i}-START ${marker.repeat(2000)} ATTR-${i}-END`,
+    }));
+    const sections = [
+      makeSection({
+        id: "root-1",
+        parentId: null,
+        title: "Root",
+        content: "",
+      }),
+      makeSection({ content: marker.repeat(200000) }),
+    ];
+
+    const prompt = buildPrompt(book, sections, attributes, [], {});
+
+    // Only content bodies use "q", so this counts the included characters and
+    // proves sections + attributes share the global budget.
+    expect((prompt.match(/q/g) || []).length).toBeLessThanOrEqual(
+      ANALYSIS_TOTAL_CHAR_BUDGET,
+    );
+    // Every attribute is represented but truncated at its allocation.
+    for (let i = 0; i < attributes.length; i++) {
+      expect(prompt).toContain(`ATTR-${i}-START`);
+      expect(prompt).not.toContain(`ATTR-${i}-END`);
+    }
+    expect(prompt).toContain("(truncated,");
+    // The section keeps at least its floor.
+    const sectionContent = prompt.match(/Content: (q+)/);
+    expect(sectionContent?.[1].length).toBeGreaterThanOrEqual(
+      ANALYSIS_SECTION_FLOOR,
+    );
+  });
+
+  it("walks the tree linearly and keeps sibling order and nesting", () => {
+    const sections = [
+      makeSection({ id: "root-1", parentId: null, title: "Root", content: "" }),
+      makeSection({
+        id: "a",
+        parentId: "root-1",
+        title: "First",
+        content: "A-CONTENT",
+        orderIndex: 1,
+      }),
+      makeSection({
+        id: "b",
+        parentId: "root-1",
+        title: "Second",
+        content: "B-CONTENT",
+        orderIndex: 0,
+      }),
+      makeSection({
+        id: "a1",
+        parentId: "a",
+        title: "First child",
+        content: "A1-CONTENT",
+        orderIndex: 0,
+      }),
+    ];
+
+    const prompt = buildPrompt(book, sections, [], [], {});
+
+    expect(prompt.indexOf("**Second**")).toBeLessThan(
+      prompt.indexOf("**First**"),
+    );
+    expect(prompt.indexOf("**First**")).toBeLessThan(
+      prompt.indexOf("**First child**"),
+    );
+    expect(prompt).toContain("  - **First child**");
   });
 });
 
@@ -337,5 +428,119 @@ describe("BookAnalysis — staleness", () => {
       makeSection({ id: "sec-2", dateUpdated: "2026-10-16T12:00:00.000Z" }),
     ]);
     expect(await BookAnalysisIsStale("book-1")).toBe(false);
+  });
+});
+
+describe("BookAnalysis — contentVersion staleness", () => {
+  const cachedAt = "2026-10-16T12:00:00.000Z";
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    seedBook();
+    sectionsDataListByBookMock.mockResolvedValue([
+      makeSection({ content: "Some real content." }),
+    ]);
+    bookAttributesDataListByBookMock.mockResolvedValue([]);
+  });
+
+  it("stores the book content version in the generated report", async () => {
+    booksDataGetMock.mockResolvedValue({
+      id: "book-1",
+      name: "My Book",
+      description: "A test book",
+      dateCreated: "2026-10-16T00:00:00.000Z",
+      contentVersion: 7,
+    });
+    callLLMWithRetryMock.mockResolvedValue(
+      "## Summary\nGood book.\n\n## Strengths\n- Clear voice\n\n## Areas for Improvement\n- Thin ending\n\n## Suggestions\n- Expand chapter 2",
+    );
+
+    const result = await BookAnalysisGenerate("book-1");
+
+    expect(result.contentVersion).toBe(7);
+    expect(fsMock.writeJson.mock.calls[0][1].contentVersion).toBe(7);
+  });
+
+  it("compares versions without reading content", async () => {
+    const cached = {
+      generatedAt: cachedAt,
+      contentVersion: 4,
+    } as any;
+    booksDataGetMock.mockClear();
+    sectionsDataListByBookMock.mockClear();
+
+    expect(
+      await BookAnalysisIsStale("book-1", { contentVersion: 4 }, cached),
+    ).toBe(false);
+    expect(
+      await BookAnalysisIsStale("book-1", { contentVersion: 5 }, cached),
+    ).toBe(true);
+
+    expect(booksDataGetMock).not.toHaveBeenCalled();
+    expect(sectionsDataListByBookMock).not.toHaveBeenCalled();
+    expect(fsMock.writeJson).not.toHaveBeenCalled();
+  });
+
+  it("treats a pre-migration row as version 1", async () => {
+    expect(
+      await BookAnalysisIsStale(
+        "book-1",
+        {},
+        { generatedAt: cachedAt, contentVersion: 1 } as any,
+      ),
+    ).toBe(false);
+    expect(
+      await BookAnalysisIsStale(
+        "book-1",
+        {},
+        { generatedAt: cachedAt, contentVersion: 1 } as any,
+      ),
+    ).toBe(false);
+  });
+
+  it("upgrades a fresh hash-only cache once, then uses the version", async () => {
+    const hash = await BookAnalysisComputeContentHash("book-1");
+    booksDataGetMock.mockClear();
+    sectionsDataListByBookMock.mockClear();
+
+    const fresh = await BookAnalysisIsStale(
+      "book-1",
+      { contentVersion: 3 },
+      { generatedAt: cachedAt, contentHash: hash } as any,
+    );
+    expect(fresh).toBe(false);
+    expect(fsMock.writeJson).toHaveBeenCalledTimes(1);
+    const upgraded = fsMock.writeJson.mock.calls[0][1];
+    expect(upgraded.contentVersion).toBe(3);
+
+    jest.clearAllMocks();
+    expect(
+      await BookAnalysisIsStale("book-1", { contentVersion: 3 }, upgraded),
+    ).toBe(false);
+    expect(booksDataGetMock).not.toHaveBeenCalled();
+    expect(sectionsDataListByBookMock).not.toHaveBeenCalled();
+    expect(fsMock.writeJson).not.toHaveBeenCalled();
+  });
+
+  it("does not rewrite a stale hash-only cache", async () => {
+    const result = await BookAnalysisIsStale(
+      "book-1",
+      { contentVersion: 3 },
+      { generatedAt: cachedAt, contentHash: "0".repeat(64) } as any,
+    );
+    expect(result).toBe(true);
+    expect(fsMock.writeJson).not.toHaveBeenCalled();
+  });
+
+  it("excludes dateUpdated from the content hash", async () => {
+    const before = await BookAnalysisComputeContentHash("book-1");
+    sectionsDataListByBookMock.mockResolvedValue([
+      makeSection({
+        content: "Some real content.",
+        dateUpdated: "2026-10-17T00:00:00.000Z",
+      }),
+    ]);
+    const after = await BookAnalysisComputeContentHash("book-1");
+    expect(after).toBe(before);
   });
 });

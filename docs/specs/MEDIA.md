@@ -37,9 +37,10 @@ Media items (pictures) can be attached to books and referenced by sections. Medi
 - [x] Click-to-upload alternative
 - [x] Multiple file upload support
 - [x] Image types only: JPEG, PNG, GIF, WebP, SVG
-- [x] Max file size: 10 MB (configured via fastify/multipart)
+- [x] Max file size: 10 MB (configured via fastify/multipart; the server remains authoritative)
+- [x] Files over 10 MB and unsupported types are rejected client-side before any request is sent, with a clear message
 - [x] Filename sanitized on upload
-- [x] Upload progress indicator
+- [x] Real upload progress: `onUploadProgress` percentage plus the current file name (the whole batch is validated before uploading starts)
 
 ## API Endpoints
 

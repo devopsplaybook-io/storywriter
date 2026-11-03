@@ -603,10 +603,18 @@ async function loadBook() {
   try {
     const bookId = route.params.id;
     book.value = await booksStore.fetchById(bookId);
-    await sectionsStore.fetchByBook(bookId);
-    await mediaStore.fetchMedia(bookId);
-    await propertiesStore.fetchByBook(bookId);
-    await propertiesStore.fetchAllSectionValues(bookId);
+    // The remaining reads are independent: run them together. Sections are
+    // needed to render the page; media and properties are optional and a
+    // failure there must not blank the whole book.
+    const [sectionsResult] = await Promise.allSettled([
+      sectionsStore.fetchByBook(bookId),
+      mediaStore.fetchMedia(bookId),
+      propertiesStore.fetchByBook(bookId),
+      propertiesStore.fetchAllSectionValues(bookId),
+    ]);
+    if (sectionsResult.status === "rejected") {
+      throw sectionsResult.reason;
+    }
     // Restore section from URL query param, or fall back to root
     const sectionFromUrl = route.query.section;
     if (
@@ -747,11 +755,7 @@ async function handleReorderChildren({ sourceIndex, targetIndex }) {
   children.splice(targetIndex, 0, moved);
   // Update orderIndex for all affected children
   try {
-    for (let i = 0; i < children.length; i++) {
-      if (children[i].orderIndex !== i) {
-        await sectionsStore.reorder(children[i].id, i);
-      }
-    }
+    await applyArrangement(currentSection.value.id, children);
   } catch {
     // Refetch so the UI does not keep an optimistic order that failed to persist
     await sectionsStore.fetchByBook(book.value.id);
@@ -778,17 +782,23 @@ function arrangementForInsert(parentId, movedId, insertIndex) {
   return list;
 }
 
-// Persist orderIndexes that differ from the desired sequential order
-async function applyArrangement(list) {
-  for (let i = 0; i < list.length; i++) {
-    if (list[i].orderIndex !== i) {
-      await sectionsStore.reorder(list[i].id, i);
-    }
+// Persist the desired child order in one bulk request (no-op when it already
+// matches the stored orderIndexes).
+async function applyArrangement(parentId, list) {
+  const unchanged = list.every((section, index) => {
+    const current = sectionsStore.sections.find((s) => s.id === section.id);
+    return current?.orderIndex === index;
+  });
+  if (list.length > 0 && !unchanged) {
+    await sectionsStore.reorderBulk(
+      parentId,
+      list.map((section) => section.id),
+    );
   }
 }
 
 async function renumberChildren(parentId) {
-  await applyArrangement(sectionsStore.getChildren(parentId));
+  await applyArrangement(parentId, sectionsStore.getChildren(parentId));
 }
 
 async function handleTreeMove(id, parentId, orderIndex) {
@@ -808,7 +818,7 @@ async function handleTreeMove(id, parentId, orderIndex) {
   try {
     const arrangement = arrangementForInsert(parentId, id, orderIndex);
     await sectionsStore.move(id, parentId, orderIndex);
-    await applyArrangement(arrangement);
+    await applyArrangement(parentId, arrangement);
     if (oldParentId !== parentId) {
       await renumberChildren(oldParentId);
     }
@@ -831,7 +841,10 @@ async function handleTreeReorder(id, parentId, orderIndex) {
   const target = sectionsStore.sections.find((s) => s.id === parentId);
   if (!target || target.type !== "container") return;
   try {
-    await applyArrangement(arrangementForInsert(parentId, id, orderIndex));
+    await applyArrangement(
+      parentId,
+      arrangementForInsert(parentId, id, orderIndex),
+    );
   } catch {
     await sectionsStore.fetchByBook(book.value.id);
     toastsStore.error("Could not reorder sections.");
@@ -858,7 +871,7 @@ async function handleDuplicate(id) {
       .filter((s) => s.id !== copy.id);
     const origIndex = siblings.findIndex((s) => s.id === id);
     siblings.splice(origIndex + 1, 0, copy);
-    await applyArrangement(siblings);
+    await applyArrangement(section.parentId, siblings);
   } catch {
     toastsStore.error("Could not duplicate section.");
   }

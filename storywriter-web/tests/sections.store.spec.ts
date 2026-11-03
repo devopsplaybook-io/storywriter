@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { useSectionsStore } from "../stores/sections";
+import { countBookWords } from "../utils/wordCount";
 
 vi.mock("../utils/api", () => ({
   default: {
@@ -17,10 +18,11 @@ const mockedApi = api as unknown as {
   get: ReturnType<typeof vi.fn>;
   post: ReturnType<typeof vi.fn>;
   put: ReturnType<typeof vi.fn>;
+  delete: ReturnType<typeof vi.fn>;
 };
 
 function seedSections(store) {
-  store.sections = [
+  store.setSections([
     {
       id: "s1",
       bookId: "b1",
@@ -66,7 +68,7 @@ function seedSections(store) {
       dateUpdated: "2026-10-16T00:00:00.000Z",
       revision: 2,
     },
-  ];
+  ]);
 }
 
 describe("sections store — live word counts", () => {
@@ -95,18 +97,171 @@ describe("sections store — live word counts", () => {
     expect(store.bookWordCount).toBe(2);
   });
 
-  it("removing a section drops its stored content and live override", () => {
+  it("removing a section drops its stored content and live override", async () => {
     const store = useSectionsStore();
     seedSections(store);
     store.setLiveContent("s3", "brand new words");
-    store.sections = store.sections.filter((s) => s.id !== "s3");
-    delete store.liveContent.s3;
+    expect(store.bookWordCount).toBe(6);
+
+    mockedApi.delete.mockResolvedValueOnce({ data: {} });
+    await store.remove("s3");
+
     expect(store.bookWordCount).toBe(3);
+    expect(store.liveContent.s3).toBeUndefined();
+    expect(store.wordCounts.s3).toBeUndefined();
   });
 
   it("counts an empty book as zero", () => {
     const store = useSectionsStore();
     expect(store.bookWordCount).toBe(0);
+  });
+});
+
+describe("sections store — incremental word counts match full recomputation", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    mockedApi.get.mockReset();
+  });
+
+  function expectMatchesFullRecompute(store) {
+    expect(store.bookWordCount).toBe(
+      countBookWords(store.sections, store.liveContent),
+    );
+  }
+
+  function seedFixtures(store) {
+    store.setSections([
+      {
+        id: "root",
+        bookId: "b1",
+        parentId: null,
+        type: "container",
+        title: "Root",
+        content: "",
+        analysis: "",
+        mediaId: null,
+        caption: "",
+        orderIndex: 0,
+        dateCreated: "2026-10-16T00:00:00.000Z",
+        dateUpdated: "2026-10-16T00:00:00.000Z",
+        revision: 1,
+      },
+      {
+        id: "markdown",
+        bookId: "b1",
+        parentId: "root",
+        type: "text",
+        title: "Markdown",
+        content:
+          "# Title\n\nSome **bold** words and a [link](https://example.com).\n\n```js\nconst x = 1;\n```",
+        analysis: "",
+        mediaId: null,
+        caption: "",
+        orderIndex: 0,
+        dateCreated: "2026-10-16T00:00:00.000Z",
+        dateUpdated: "2026-10-16T00:00:00.000Z",
+        revision: 1,
+      },
+      {
+        id: "empty",
+        bookId: "b1",
+        parentId: "root",
+        type: "text",
+        title: "Empty",
+        content: "",
+        analysis: "",
+        mediaId: null,
+        caption: "",
+        orderIndex: 1,
+        dateCreated: "2026-10-16T00:00:00.000Z",
+        dateUpdated: "2026-10-16T00:00:00.000Z",
+        revision: 1,
+      },
+      {
+        id: "media",
+        bookId: "b1",
+        parentId: "root",
+        type: "media",
+        title: "Picture",
+        content: "",
+        analysis: "",
+        mediaId: "m1",
+        caption: "A caption with words",
+        orderIndex: 2,
+        dateCreated: "2026-10-16T00:00:00.000Z",
+        dateUpdated: "2026-10-16T00:00:00.000Z",
+        revision: 1,
+      },
+    ]);
+  }
+
+  it("matches full recomputation after seeding and live edits", () => {
+    const store = useSectionsStore();
+    seedFixtures(store);
+    expectMatchesFullRecompute(store);
+
+    for (const content of [
+      "one two",
+      "",
+      "## Heading\n\nfinal **three** words",
+      "- item one\n- item two",
+    ]) {
+      store.setLiveContent("markdown", content);
+      expectMatchesFullRecompute(store);
+    }
+    store.setLiveContent("empty", "now not empty");
+    expectMatchesFullRecompute(store);
+  });
+
+  it("matches full recomputation after create, update and remove", async () => {
+    const store = useSectionsStore();
+    seedFixtures(store);
+
+    const created = {
+      ...store.sections[1],
+      id: "created",
+      content: "brand new content",
+      revision: 1,
+    };
+    mockedApi.post.mockResolvedValueOnce({ data: created });
+    await store.create("b1", "root", "text", "Created");
+    expectMatchesFullRecompute(store);
+
+    const updated = {
+      ...store.sections[1],
+      content: "**replaced** content",
+      revision: 2,
+    };
+    mockedApi.put.mockResolvedValueOnce({ data: updated });
+    await store.update("markdown", { content: "**replaced** content" });
+    expectMatchesFullRecompute(store);
+
+    mockedApi.delete.mockResolvedValueOnce({ data: {} });
+    await store.remove("created");
+    expectMatchesFullRecompute(store);
+  });
+});
+
+describe("sections store — bulk reorder", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    mockedApi.put.mockReset();
+  });
+
+  it("sends one request and applies the new indexes locally", async () => {
+    const store = useSectionsStore();
+    seedSections(store);
+    mockedApi.put.mockResolvedValueOnce({ data: {} });
+
+    await store.reorderBulk("s1", ["s3", "s2"]);
+
+    expect(mockedApi.put).toHaveBeenCalledTimes(1);
+    expect(mockedApi.put).toHaveBeenCalledWith("/sections/reorder", {
+      parentId: "s1",
+      sectionIds: ["s3", "s2"],
+    });
+    expect(store.sections.find((s) => s.id === "s3").orderIndex).toBe(0);
+    expect(store.sections.find((s) => s.id === "s2").orderIndex).toBe(1);
   });
 });
 

@@ -118,10 +118,11 @@ describe("Book", () => {
   });
 
   describe("toTransportJson", () => {
-    it("should return the same as toJson", () => {
+    it("matches toJson but keeps the internal contentVersion out", () => {
       const book = new Book();
       book.name = "Test Book";
-      expect(book.toTransportJson()).toEqual(book.toJson());
+      const { contentVersion: _contentVersion, ...json } = book.toJson();
+      expect(book.toTransportJson()).toEqual(json);
     });
   });
 });

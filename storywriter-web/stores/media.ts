@@ -53,11 +53,25 @@ export const useMediaStore = defineStore("media", {
       this.mediaByBook[bookId] = res.data;
     },
 
-    async uploadMedia(bookId: string, file: File): Promise<Media> {
+    async uploadMedia(
+      bookId: string,
+      file: File,
+      onProgress?: (percent: number) => void,
+    ): Promise<Media> {
       const formData = new FormData();
       formData.append("file", file);
       const res = await api.post(`/books/${bookId}/media`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
+        onUploadProgress: onProgress
+          ? (event: { loaded: number; total?: number }) => {
+              const total = event.total ?? 0;
+              if (total > 0) {
+                onProgress(
+                  Math.min(100, Math.round((event.loaded / total) * 100)),
+                );
+              }
+            }
+          : undefined,
       });
       if (!this.mediaByBook[bookId]) {
         this.mediaByBook[bookId] = [];

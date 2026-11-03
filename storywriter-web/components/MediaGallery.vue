@@ -23,8 +23,8 @@
     </div>
 
     <div v-if="uploading" class="upload-progress">
-      <div class="loading-indicator" />
-      <span>Uploading...</span>
+      <progress max="100" :value="uploadPercent" />
+      <span>{{ uploadFileName }} — {{ uploadPercent }}%</span>
     </div>
 
     <div v-if="error" class="error-message">
@@ -115,6 +115,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useMediaStore } from "../stores/media";
+import { validateMediaFile } from "../utils/mediaUpload";
 
 const props = defineProps({
   bookId: { type: String, required: true },
@@ -128,6 +129,8 @@ const mediaStore = useMediaStore();
 
 const isDragging = ref(false);
 const uploading = ref(false);
+const uploadPercent = ref(0);
+const uploadFileName = ref("");
 const error = ref(null);
 const contextMenu = ref({ visible: false, x: 0, y: 0 });
 const selectedItem = ref(null);
@@ -209,27 +212,33 @@ async function handleDrop(event) {
 async function uploadFiles(files) {
   if (props.readOnly) return;
   error.value = null;
-  const validTypes = [
-    "image/jpeg",
-    "image/png",
-    "image/gif",
-    "image/webp",
-    "image/svg+xml",
-  ];
 
+  // Validate the whole batch first: never start a partial upload when one of
+  // the selected files is rejected.
   for (const file of files) {
-    if (!validTypes.includes(file.type)) {
-      error.value = `Invalid file type: ${file.name}`;
-      continue;
-    }
-    uploading.value = true;
-    try {
-      await mediaStore.uploadMedia(props.bookId, file);
-    } catch (e) {
-      error.value = e.response?.data?.error || "Upload failed";
+    const message = validateMediaFile(file);
+    if (message) {
+      error.value = message;
+      return;
     }
   }
-  uploading.value = false;
+
+  for (const file of files) {
+    uploading.value = true;
+    uploadPercent.value = 0;
+    uploadFileName.value = file.name;
+    try {
+      await mediaStore.uploadMedia(props.bookId, file, (percent) => {
+        uploadPercent.value = percent;
+      });
+    } catch (e) {
+      error.value = e.response?.data?.error || "Upload failed";
+    } finally {
+      uploading.value = false;
+      uploadPercent.value = 0;
+      uploadFileName.value = "";
+    }
+  }
 }
 
 function openContextMenu(event, item) {
@@ -327,6 +336,11 @@ async function deleteMedia() {
   padding: var(--space-sm);
   background: var(--pico-card-background-color, rgba(255, 255, 255, 0.02));
   border-radius: var(--radius-sm, 4px);
+}
+
+.upload-progress progress {
+  flex: 1;
+  margin: 0;
 }
 
 .error-message {

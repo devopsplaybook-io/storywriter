@@ -10,6 +10,7 @@ import { BookAttribute } from "../model/BookAttribute";
 import { Property } from "../model/Property";
 import { SafeJoin, IsSafePathSegment } from "../utils/SafePath";
 import { DbUtilsTransaction } from "../utils/DbTransaction";
+import { BookContentVersionBump } from "./BookContentVersion";
 import { BooksDataGet, BooksDataAdd, BooksDataSetAccess } from "./BooksData";
 import {
   SectionsDataListByBook,
@@ -461,6 +462,10 @@ export async function BookImportRun(
       // The importer gets write access inside the same transaction so a
       // failure never leaves an inaccessible partial book.
       await BooksDataSetAccess(newBook.id, ownerId, "write");
+
+      // Import is a content-bearing write: keep the version-counter rule
+      // uniform even though a new book starts at version 1.
+      await BookContentVersionBump(newBook.id);
     });
 
     return newBook;

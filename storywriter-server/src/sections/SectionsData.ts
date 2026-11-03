@@ -7,6 +7,7 @@ import {
 import { collectSubtree, subtreeDepth } from "./SectionsTree";
 import { DbUtilsTransaction } from "../utils/DbTransaction";
 import { PropertiesDataGetAllSectionValuesForBook } from "../properties/PropertiesData";
+import { BookContentVersionBump } from "../books/BookContentVersion";
 
 export const MAX_COPY_NODES = 1000;
 export const MAX_COPY_DEPTH = 100;
@@ -205,6 +206,9 @@ export async function SectionsDataUpdateAnalysis(
     if (affected === 0 || !current) {
       throw new SectionsAnalysisConflictError(current, analysis);
     }
+    if (analysis !== (expectedAnalysis || "")) {
+      await BookContentVersionBump(current.bookId);
+    }
     return current;
   });
 }
@@ -230,6 +234,28 @@ export async function SectionsDataMove(
     new Date().toISOString(),
     id,
   ]);
+}
+
+/**
+ * Apply a new sibling order for one parent atomically: the caller has already
+ * validated that `orderedIds` is an exact permutation of the parent's current
+ * children. Each id is written at its list position inside one transaction,
+ * together with the book content-version bump.
+ */
+export async function SectionsDataReorder(
+  parentId: string,
+  bookId: string,
+  orderedIds: string[],
+): Promise<void> {
+  await DbUtilsTransaction(async () => {
+    for (let i = 0; i < orderedIds.length; i++) {
+      await DbUtilsExecSQL(
+        SQL_QUERIES.UPDATE_SECTION_ORDER_IN_PARENT[DbUtilsGetType()],
+        [i, orderedIds[i], parentId],
+      );
+    }
+    await BookContentVersionBump(bookId);
+  });
 }
 
 export async function SectionsDataDelete(
@@ -265,6 +291,7 @@ export async function SectionsDataDelete(
         chunk,
       );
     }
+    await BookContentVersionBump(bookId);
   });
 }
 
@@ -375,6 +402,7 @@ export async function SectionsDataCopy(
         params,
       );
     }
+    await BookContentVersionBump(source.bookId);
   });
   return copies.get(sourceId);
 }
@@ -455,6 +483,12 @@ const SQL_QUERIES = {
   UPDATE_SECTION_ORDER: {
     postgres: 'UPDATE sections SET "orderIndex" = $1 WHERE "id" = $2',
     sqlite: "UPDATE sections SET orderIndex = ? WHERE id = ?",
+  },
+  UPDATE_SECTION_ORDER_IN_PARENT: {
+    postgres:
+      'UPDATE sections SET "orderIndex" = $1 WHERE "id" = $2 AND "parentId" = $3',
+    sqlite:
+      "UPDATE sections SET orderIndex = ? WHERE id = ? AND parentId = ?",
   },
   MOVE_SECTION: {
     postgres:

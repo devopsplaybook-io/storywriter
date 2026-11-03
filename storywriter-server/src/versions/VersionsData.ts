@@ -15,6 +15,7 @@ import { DbUtilsTransaction } from "../utils/DbTransaction";
 import { SafeJoin, IsSafePathSegment } from "../utils/SafePath";
 import { LinkOrCopyFile, RemoveMediaDirsNotIn } from "../books/BookFiles";
 import { BooksDataGet } from "../books/BooksData";
+import { BookContentVersionBump } from "../books/BookContentVersion";
 import { BookAnalysisDeleteCache } from "../analysis/BookAnalysis";
 import {
   SectionsDataListByBook,
@@ -405,6 +406,10 @@ export async function VersionsDataRestore(
           );
         }
       }
+
+      // Restoring a version replaces the book content: bump the version so a
+      // cached analysis report is never considered fresh.
+      await BookContentVersionBump(version.bookId);
     });
   } catch (err) {
     await fs.remove(stagingDir).catch(() => undefined);

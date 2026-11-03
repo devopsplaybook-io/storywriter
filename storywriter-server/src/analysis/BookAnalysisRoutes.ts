@@ -48,9 +48,11 @@ export class BookAnalysisRoutes {
           stale: false,
         });
       }
+      // contentVersion is internal; keep the public report shape unchanged.
+      const { contentVersion: _contentVersion, ...report } = cached;
       return res.status(200).send({
-        ...cached,
-        stale: await BookAnalysisIsStale(req.params.id),
+        ...report,
+        stale: await BookAnalysisIsStale(req.params.id, book, cached),
       });
     });
 

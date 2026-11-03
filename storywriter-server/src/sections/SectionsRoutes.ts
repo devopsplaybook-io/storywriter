@@ -21,6 +21,7 @@ import {
   SectionsDataListByBook,
   SectionsDataListChildren,
   SectionsDataMove,
+  SectionsDataReorder,
   SectionsDataUpdate,
   SectionsDataUpdateOrder,
 } from "./SectionsData";
@@ -33,6 +34,8 @@ import {
 import { AuthGetLiveUser } from "@devopsplaybook.io/common-utils";
 import { Config } from "../Config";
 import { AI_PROVIDER_ERROR_MESSAGE } from "../analysis/LlmClient";
+import { DbUtilsTransaction } from "../utils/DbTransaction";
+import { BookContentVersionBump } from "../books/BookContentVersion";
 
 export class SectionsRoutes {
   private config: Config;
@@ -100,6 +103,50 @@ export class SectionsRoutes {
         return res.status(404).send({ error: "Root Section Not Found" });
       }
       return res.status(200).send(root.toTransportJson());
+    });
+
+    // ==================== BULK REORDER SECTIONS ====================
+    // Registered before the `/:id` routes so "reorder" is never captured as
+    // a section id.
+    interface PutBulkOrder extends RequestGenericInterface {
+      Body: { parentId: string; sectionIds: string[] };
+    }
+    fastify.put<PutBulkOrder>("/reorder", async (req, res) => {
+      const parentId = req.body?.parentId;
+      const sectionIds = req.body?.sectionIds;
+      if (!parentId) {
+        return res.status(400).send({ error: "Missing: parentId" });
+      }
+      if (
+        !Array.isArray(sectionIds) ||
+        sectionIds.length === 0 ||
+        sectionIds.some((id) => typeof id !== "string" || id.length === 0) ||
+        new Set(sectionIds).size !== sectionIds.length
+      ) {
+        return res.status(400).send({ error: "Invalid: sectionIds" });
+      }
+      const parent = await SectionsDataGet(parentId);
+      if (!parent) {
+        return res.status(404).send({ error: "Parent Section Not Found" });
+      }
+      if (!(await CheckBookAccess(req, res, parent.bookId, "write"))) return;
+      const children = await SectionsDataListChildren(parentId, parent.bookId);
+      const currentIds = children.map((c) => c.id);
+      const isPermutation =
+        currentIds.length === sectionIds.length &&
+        currentIds.every((id) => sectionIds.includes(id));
+      if (!isPermutation) {
+        return res
+          .status(400)
+          .send({ error: "sectionIds must match the current children" });
+      }
+      const unchanged =
+        currentIds.length === sectionIds.length &&
+        currentIds.every((id, index) => id === sectionIds[index]);
+      if (!unchanged) {
+        await SectionsDataReorder(parentId, parent.bookId, sectionIds);
+      }
+      return res.status(200).send({});
     });
 
     // ==================== GET SECTION ====================
@@ -191,7 +238,10 @@ export class SectionsRoutes {
       section.mediaId = req.body.mediaId || null;
       section.caption = req.body.caption || "";
       section.orderIndex = req.body.orderIndex ?? 0;
-      await SectionsDataAdd(section);
+      await DbUtilsTransaction(async () => {
+        await SectionsDataAdd(section);
+        await BookContentVersionBump(section.bookId);
+      });
       return res.status(201).send(section.toTransportJson());
     });
 
@@ -246,16 +296,38 @@ export class SectionsRoutes {
         }
       }
 
+      const previous = {
+        type: section.type,
+        title: section.title,
+        content: section.content,
+        analysis: section.analysis,
+        mediaId: section.mediaId,
+        caption: section.caption,
+      };
       if (req.body.type !== undefined) section.type = req.body.type;
       if (req.body.title !== undefined) section.title = req.body.title;
       if (req.body.content !== undefined) section.content = req.body.content;
       if (req.body.analysis !== undefined) section.analysis = req.body.analysis;
       if (req.body.mediaId !== undefined) section.mediaId = req.body.mediaId;
       if (req.body.caption !== undefined) section.caption = req.body.caption;
+      const changed =
+        section.type !== previous.type ||
+        section.title !== previous.title ||
+        section.content !== previous.content ||
+        section.analysis !== previous.analysis ||
+        section.mediaId !== previous.mediaId ||
+        section.caption !== previous.caption;
       try {
         // Requests without a revision keep the unconditional update
         // (backwards-compatible for API-token scripts).
-        await SectionsDataUpdate(section, req.body.revision);
+        if (changed) {
+          await DbUtilsTransaction(async () => {
+            await SectionsDataUpdate(section, req.body.revision);
+            await BookContentVersionBump(section.bookId);
+          });
+        } else {
+          await SectionsDataUpdate(section, req.body.revision);
+        }
       } catch (error) {
         if (error instanceof SectionsConflictError) {
           return res.status(409).send({
@@ -347,7 +419,12 @@ export class SectionsRoutes {
         return res.status(404).send({ error: "Section Not Found" });
       }
       if (!(await CheckBookAccess(req, res, section.bookId, "write"))) return;
-      await SectionsDataUpdateOrder(req.params.id, req.body.orderIndex);
+      if (section.orderIndex !== req.body.orderIndex) {
+        await DbUtilsTransaction(async () => {
+          await SectionsDataUpdateOrder(req.params.id, req.body.orderIndex);
+          await BookContentVersionBump(section.bookId);
+        });
+      }
       return res.status(200).send({});
     });
 
@@ -393,11 +470,25 @@ export class SectionsRoutes {
           .send({ error: "Cannot move a section into its own subtree" });
       }
 
-      await SectionsDataMove(
-        req.params.id,
-        req.body.parentId,
-        req.body.orderIndex,
-      );
+      const changed =
+        section.parentId !== req.body.parentId ||
+        section.orderIndex !== req.body.orderIndex;
+      if (changed) {
+        await DbUtilsTransaction(async () => {
+          await SectionsDataMove(
+            req.params.id,
+            req.body.parentId,
+            req.body.orderIndex,
+          );
+          await BookContentVersionBump(section.bookId);
+        });
+      } else {
+        await SectionsDataMove(
+          req.params.id,
+          req.body.parentId,
+          req.body.orderIndex,
+        );
+      }
       return res.status(200).send({});
     });
 

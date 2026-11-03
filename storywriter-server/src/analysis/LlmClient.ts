@@ -1,7 +1,8 @@
 import axios from "axios";
 import { Config } from "../Config";
+import { OTelLogger } from "../OTelContext";
 
-const logger = console;
+const logger = OTelLogger().createModuleLogger("llm-client");
 
 let config: Config;
 
@@ -46,28 +47,27 @@ export interface LlmCallOptions {
 // ── LLM API call with retry ───────────────────────────────────────────────────
 
 /**
- * Call the LLM API with a bounded retry budget: 2 attempts, a per-attempt
- * timeout (LLM_TIMEOUT_MS) and an overall deadline (LLM_OVERALL_TIMEOUT_MS)
- * enforced with an AbortController so in-flight provider calls are cancelled
- * and remaining attempts are skipped once the budget is exhausted.
+ * Call the LLM API with a bounded retry budget: 3 attempts total (2 retries
+ * with 1 s / 2 s backoff), a per-attempt timeout (LLM_TIMEOUT_MS) and an
+ * overall deadline (LLM_OVERALL_TIMEOUT_MS) enforced with an AbortController so
+ * in-flight provider calls are cancelled and remaining attempts are skipped
+ * once the budget is exhausted.
  */
 export async function callLLMWithRetry(
   prompt: string,
   options: LlmCallOptions,
   maxRetries = 2,
 ): Promise<string> {
+  const overallTimeoutMs = LlmOverallTimeoutMs();
+  const deadline = Date.now() + overallTimeoutMs;
   const abort = new AbortController();
-  const overallTimer = setTimeout(
-    () => abort.abort(),
-    LlmOverallTimeoutMs(),
-  );
-  // An unref'd timer would not keep the process alive unnecessarily, but the
-  // call is awaited anyway; clear it in every exit path.
+  const overallTimer = setTimeout(() => abort.abort(), overallTimeoutMs);
+  const maxAttempts = Math.max(1, maxRetries + 1);
   try {
     let lastError: Error | undefined;
 
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      if (abort.signal.aborted) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (abort.signal.aborted || Date.now() >= deadline) {
         break;
       }
       try {
@@ -108,22 +108,45 @@ export async function callLLMWithRetry(
         if (abort.signal.aborted) {
           break;
         }
-        if (attempt < maxRetries - 1) {
+        if (attempt < maxAttempts - 1) {
           const delay = Math.pow(2, attempt) * 1000;
+          // Do not start a sleep that would outlive the overall deadline.
+          if (Date.now() + delay >= deadline) {
+            break;
+          }
           logger.warn(
             `[LlmClient] LLM API attempt ${attempt + 1} failed (status=${status}), retrying in ${delay}ms: ${lastError.message}`,
           );
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          await sleepUntilAborted(delay, abort.signal);
         }
       }
     }
-    if (lastError?.name === "CanceledError") {
+    if (abort.signal.aborted) {
       throw new Error(
-        `LLM API call aborted after the ${Math.round(LlmOverallTimeoutMs() / 1000)}s overall timeout`,
+        `LLM API call aborted after the ${Math.round(overallTimeoutMs / 1000)}s overall timeout`,
       );
     }
     throw lastError || new Error("LLM API call failed after retries");
   } finally {
     clearTimeout(overallTimer);
   }
+}
+
+/** Sleep that resolves early when the overall abort fires. */
+function sleepUntilAborted(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
