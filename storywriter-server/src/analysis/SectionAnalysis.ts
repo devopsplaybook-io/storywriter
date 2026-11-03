@@ -1,6 +1,6 @@
 import { BooksDataGet } from "../books/BooksData";
 import { Section } from "../model/Section";
-import { SectionsDataUpdate } from "../sections/SectionsData";
+import { SectionsDataUpdateAnalysis } from "../sections/SectionsData";
 import { BookAttributesDataListByBook } from "../attributes/BookAttributesData";
 import {
   PropertiesDataGetSectionValues,
@@ -41,6 +41,10 @@ export async function SectionAnalysisGenerate(
 ): Promise<Section> {
   assertLlmAvailable();
 
+  // The notes are read before the (slow) LLM call; remember the value so a
+  // manual notes edit during generation is detected and never overwritten.
+  const expectedAnalysis = section.analysis || "";
+
   const book = await BooksDataGet(section.bookId);
   const attributes = await BookAttributesDataListByBook(section.bookId);
   const propertyValues = await resolveSectionPropertyValues(section);
@@ -64,14 +68,18 @@ export async function SectionAnalysisGenerate(
     throw new Error("LLM returned an empty response. Please check API configuration.");
   }
 
-  section.analysis = analysis.trim();
-  // The section was read before the LLM call: a concurrent edit meanwhile
-  // surfaces as a conflict instead of silently overwriting it.
-  await SectionsDataUpdate(section, section.revision);
+  // Targeted save: only the analysis column is written, so content/title edits
+  // made while the LLM was running are preserved. A manual notes edit is
+  // reported as a conflict instead of being silently replaced.
+  const updated = await SectionsDataUpdateAnalysis(
+    section.id,
+    analysis.trim(),
+    expectedAnalysis,
+  );
   logger.info(
     `[SectionAnalysis] Analysis saved for section "${section.title}"`,
   );
-  return section;
+  return updated;
 }
 
 // ── In-editor AI actions (return text only, write nothing) ────────────────────

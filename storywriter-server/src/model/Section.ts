@@ -2,6 +2,15 @@ import { v4 as uuidv4 } from "uuid";
 
 export type SectionType = "text" | "container" | "media";
 
+export const SECTION_TYPES: SectionType[] = ["text", "container", "media"];
+
+export function IsSectionType(value: unknown): value is SectionType {
+  return (
+    typeof value === "string" &&
+    (SECTION_TYPES as string[]).includes(value)
+  );
+}
+
 export class Section {
   public static fromJson(json: Record<string, unknown>): Section {
     if (!json) {

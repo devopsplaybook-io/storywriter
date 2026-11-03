@@ -1,6 +1,7 @@
 <template>
   <div class="media-gallery">
     <div
+      v-if="!readOnly"
       class="drop-zone"
       :class="{ 'drop-zone-active': isDragging }"
       @dragover.prevent="isDragging = true"
@@ -118,6 +119,7 @@ import { useMediaStore } from "../stores/media";
 const props = defineProps({
   bookId: { type: String, required: true },
   selectedId: { type: String, default: null },
+  readOnly: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["select", "deleted"]);
@@ -205,6 +207,7 @@ async function handleDrop(event) {
 }
 
 async function uploadFiles(files) {
+  if (props.readOnly) return;
   error.value = null;
   const validTypes = [
     "image/jpeg",
@@ -230,6 +233,7 @@ async function uploadFiles(files) {
 }
 
 function openContextMenu(event, item) {
+  if (props.readOnly) return;
   selectedItem.value = item;
   contextMenu.value = {
     visible: true,
@@ -249,7 +253,7 @@ function editSlug() {
 }
 
 async function saveSlug() {
-  if (!newSlug.value.trim()) return;
+  if (props.readOnly || !newSlug.value.trim()) return;
   try {
     await mediaStore.updateMediaSlug(
       props.bookId,
@@ -268,6 +272,7 @@ function confirmDelete() {
 }
 
 async function deleteMedia() {
+  if (props.readOnly) return;
   const deletedId = selectedItem.value.id;
   try {
     await mediaStore.deleteMedia(props.bookId, deletedId);

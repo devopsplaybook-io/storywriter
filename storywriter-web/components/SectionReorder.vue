@@ -20,7 +20,7 @@
           'drag-over': dragOverId === child.id,
           dragging: dragSourceId === child.id,
         }"
-        draggable="true"
+        :draggable="!readOnly"
         @dragstart="onDragStart($event, child, index)"
         @dragover.prevent="onDragOver(child)"
         @dragleave="onDragLeave"
@@ -33,7 +33,7 @@
         <i :class="getChildIcon(child)" class="child-icon" />
         <span class="child-title">{{ child.title || "Untitled" }}</span>
         <span class="child-type">{{ child.type }}</span>
-        <span class="reorder-actions">
+        <span v-if="!readOnly" class="reorder-actions">
           <button
             class="btn-sm"
             :disabled="index === 0"
@@ -60,6 +60,7 @@
 const props = defineProps({
   children: { type: Array, required: true },
   getChildren: { type: Function, required: true },
+  readOnly: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["reorder"]);
@@ -80,6 +81,10 @@ function getChildIcon(child) {
 }
 
 function onDragStart(event, child, index) {
+  if (props.readOnly) {
+    event.preventDefault();
+    return;
+  }
   dragSourceId.value = child.id;
   dragSourceIndex.value = index;
   event.dataTransfer.effectAllowed = "move";
@@ -96,7 +101,7 @@ function onDragLeave() {
 }
 
 function onDrop(targetChild, targetIndex) {
-  if (dragSourceId.value === targetChild.id) return;
+  if (props.readOnly || dragSourceId.value === targetChild.id) return;
   emit("reorder", {
     sourceIndex: dragSourceIndex.value,
     targetIndex,

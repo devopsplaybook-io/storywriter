@@ -15,7 +15,10 @@
         <i class="bi bi-book" />
         <span class="tree-label">{{ rootSection.title || "Book Root" }}</span>
         <span class="tree-actions">
-          <span v-if="rootSection.type === 'container'" class="add-child-wrap">
+          <span
+            v-if="rootSection.type === 'container' && !readOnly"
+            class="add-child-wrap"
+          >
             <i
               class="bi bi-plus-lg"
               title="Add child section"
@@ -43,6 +46,7 @@
           :selected-id="selectedId"
           :get-children="getChildren"
           :depth="1"
+          :read-only="readOnly"
           @select="(id) => $emit('select', id)"
           @add-child="(id, type) => $emit('add-child', id, type)"
           @move="
@@ -71,6 +75,7 @@ const props = defineProps({
   rootSection: { type: Object, default: null },
   selectedId: { type: String, default: null },
   getChildren: { type: Function, required: true },
+  readOnly: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -96,6 +101,7 @@ watch(treeDrag, (drag) => {
 });
 
 function onRootDragOver(event) {
+  if (props.readOnly) return;
   const drag = treeDrag.value;
   if (!drag || !props.rootSection || drag.id === props.rootSection.id) return;
   rootDropActive.value = true;
@@ -109,6 +115,7 @@ function onRootDragLeave() {
 function onRootDrop(event) {
   event.preventDefault();
   rootDropActive.value = false;
+  if (props.readOnly) return;
   const drag = treeDrag.value;
   if (!drag || !props.rootSection || drag.id === props.rootSection.id) return;
   emit(

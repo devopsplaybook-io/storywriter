@@ -2,7 +2,7 @@
   <div class="attributes-editor">
     <header class="attr-header">
       <h3><i class="bi bi-card-text" /> Book Attributes</h3>
-      <button class="btn-small" @click="addAttribute">
+      <button v-if="!readOnly" class="btn-small" @click="addAttribute">
         <i class="bi bi-plus-lg" /> Add
       </button>
     </header>
@@ -25,7 +25,7 @@
           @click="startEdit(attr)"
         >
           <span class="attr-title">{{ attr.title || "Untitled" }}</span>
-          <span class="attr-actions">
+          <span v-if="!readOnly" class="attr-actions">
             <i
               class="bi bi-pencil"
               title="Edit"
@@ -120,6 +120,7 @@ import {
 
 const props = defineProps({
   bookId: { type: String, required: true },
+  readOnly: { type: Boolean, default: false },
 });
 
 const attrStore = useBookAttributesStore();
@@ -171,6 +172,7 @@ function currentDraft() {
 }
 
 function startEdit(attr) {
+  if (props.readOnly) return;
   editingId.value = attr.id;
   editTitle.value = attr.title;
   editContent.value = attr.content;
@@ -194,6 +196,7 @@ function cancelEdit() {
 }
 
 async function addAttribute() {
+  if (props.readOnly) return;
   try {
     const attr = await attrStore.create(props.bookId, "New Attribute", "");
     startEdit(attr);
@@ -230,7 +233,7 @@ watchDebounced([editTitle, editContent], autosaveAttribute, {
 });
 
 async function autosaveAttribute() {
-  if (!editingId.value) return;
+  if (props.readOnly || !editingId.value) return;
   const data = attrDiff();
   if (Object.keys(data).length === 0) {
     if (saveStatus.status === "unsaved") saveStatus.markIdle();
@@ -276,7 +279,7 @@ onBeforeUnmount(() => {
 });
 
 async function saveEdit() {
-  if (!editingId.value) return;
+  if (props.readOnly || !editingId.value) return;
   const id = editingId.value;
   saveStatus.markSaving();
   try {
@@ -296,11 +299,12 @@ async function saveEdit() {
 }
 
 function confirmDelete(attr) {
+  if (props.readOnly) return;
   deleteTarget.value = attr;
 }
 
 async function deleteAttribute() {
-  if (!deleteTarget.value) return;
+  if (props.readOnly || !deleteTarget.value) return;
   try {
     await attrStore.remove(deleteTarget.value.id);
     if (editingId.value === deleteTarget.value.id) cancelEdit();

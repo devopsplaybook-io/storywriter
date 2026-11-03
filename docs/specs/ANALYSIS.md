@@ -44,6 +44,8 @@ LLM-powered book analysis provides AI-generated insights on structure, content q
 - [x] Each text section has an **analysis** field holding AI-generated working notes (recap, continuity, consistency with the story bible, suggestions).
 - [x] Notes are generated from the section's title and full content (same budget rule as book analysis), the book's attributes, and the section's property values with their real property names.
 - [x] Generated notes are saved on the section and editable in the editor's **AI Notes** tab (see SECTIONS.md).
+- [x] Notes are saved with a **targeted** `UPDATE … SET analysis = ?, revision = revision + 1` guarded by the analysis value present when generation started. A content edit made during generation is preserved, because the statement never writes title/content/caption/type; only a concurrent **notes** edit makes it fail.
+- [x] When the notes changed during generation, the write is rejected with `409` and `{ error, analysis, currentAnalysis, revision }`: `analysis` is the version just generated, `currentAnalysis` is the version now stored. Nothing is overwritten; the editor dialog shows both versions and the author chooses which one to keep.
 
 ## In-Editor AI Actions
 
@@ -58,7 +60,7 @@ LLM-powered book analysis provides AI-generated insights on structure, content q
 | [x] GET  | `/api/llm/status`            | LLM availability `{ available, model }` (auth required)           |
 | [x] GET  | `/api/books/:id/analysis`    | Return cached analysis (or null) with `stale` flag (read access required) |
 | [x] POST | `/api/books/:id/analysis`    | Generate a new analysis (write access required; 502 on failure; 429 when concurrency/quota exceeded) |
-| [x] POST | `/api/sections/:id/analysis` | Generate AI notes for a text section (write access required; 429 when concurrency/quota exceeded) |
+| [x] POST | `/api/sections/:id/analysis` | Generate AI notes for a text section (write access required; 429 when concurrency/quota exceeded; 409 with both note versions when they changed during generation) |
 | [x] POST | `/api/sections/:id/ai-action`| Run an AI action (`{ action, selection? }` → `{ text }`; 429 when concurrency/quota exceeded) |
 
 ## Implementation
@@ -73,4 +75,4 @@ LLM-powered book analysis provides AI-generated insights on structure, content q
 - [x] Web UI: analysis panel with availability state, regeneration overlay and stale hint in `components/AnalysisViewer.vue`.
 - [x] Web UI: AI Notes tab and AI actions menu in `components/SectionEditor.vue`, markdown rendering via `marked`.
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-11-02_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-11-03_

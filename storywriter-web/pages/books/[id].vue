@@ -16,6 +16,13 @@
         <i class="bi bi-arrow-left" />
       </NuxtLink>
       <h2>{{ book?.name }}</h2>
+      <span
+        v-if="book && !canWrite"
+        class="read-only-badge"
+        title="You have read-only access to this book"
+      >
+        <i class="bi bi-lock" /> Read-only
+      </span>
       <div class="nav-tab-actions">
         <button
           class="btn-icon"
@@ -58,6 +65,7 @@
           <i class="bi bi-lightbulb" />
         </button>
         <button
+          v-if="canWrite"
           class="btn-icon"
           title="Save Version"
           @click="showSaveVersionDialog = true"
@@ -108,6 +116,7 @@
           :root-section="sectionsStore.rootSection"
           :selected-id="selectedSectionId"
           :get-children="sectionsStore.getChildren"
+          :read-only="!canWrite"
           @select="selectSection"
           @add-child="addChildSection"
           @move="handleTreeMove"
@@ -151,6 +160,7 @@
             <i class="bi bi-list-task" /> View
           </button>
           <button
+            v-if="canWrite"
             :class="{ active: sectionViewMode === 'recursive-edit' }"
             title="Recursive edit — edit all sub-sections"
             @click="sectionViewMode = 'recursive-edit'"
@@ -167,6 +177,7 @@
           :children="currentSectionChildren"
           :get-children="sectionsStore.getChildren"
           :focus-mode="focusMode"
+          :read-only="!canWrite"
           @update="updateSection"
           @reorder="handleReorderChildren"
           @toggle-focus="focusMode = !focusMode"
@@ -186,6 +197,7 @@
           :section="currentSection"
           :get-children="sectionsStore.getChildren"
           mode="edit"
+          :read-only="!canWrite"
           @update-section="handleRecursiveUpdateSection"
         />
       </template>
@@ -198,17 +210,23 @@
 
     <!-- Full-width panel content: for attributes, properties, media -->
     <div v-if="activePanel !== 'sections'" id="panel-content">
-      <PropertyEditor v-if="activePanel === 'properties'" :book-id="book?.id" />
+      <PropertyEditor
+        v-if="activePanel === 'properties'"
+        :book-id="book?.id"
+        :read-only="!canWrite"
+      />
 
       <BookAttributesEditor
         v-if="activePanel === 'attributes'"
         :book-id="book?.id"
+        :read-only="!canWrite"
       />
 
       <MediaGallery
         v-if="activePanel === 'media' && book"
         :book-id="book.id"
         :selected-id="selectedMediaId"
+        :read-only="!canWrite"
         @select="selectMedia"
         @deleted="handleMediaDeleted"
       />
@@ -216,6 +234,7 @@
       <AnalysisViewer
         v-if="activePanel === 'analysis' && book"
         :book-id="book.id"
+        :read-only="!canWrite"
       />
     </div>
 
@@ -223,6 +242,7 @@
     <BookVersionsDialog
       :open="showVersionsDialog"
       :book-id="book?.id"
+      :read-only="!canWrite"
       @close="showVersionsDialog = false"
       @load-version="handleLoadVersion"
       @close-version="handleCloseVersion"
@@ -359,6 +379,8 @@ import { usePropertiesStore } from "../../stores/properties";
 import { useSaveStatusStore } from "../../stores/saveStatus";
 import { useToastsStore } from "../../stores/toasts";
 import { clearDraft } from "../../utils/drafts";
+import { canEditBook } from "../../utils/permissions";
+import { saveWithConflictRetry } from "../../utils/saveWithConflictRetry";
 import { isSelfOrDescendant, validMoveTargets } from "../../utils/sectionTree";
 
 const route = useRoute();
@@ -373,6 +395,8 @@ const llmStore = useLlmStore();
 
 const loading = ref(true);
 const book = ref(null);
+// Missing permission means the server did not grant write access: read-only.
+const canWrite = computed(() => canEditBook(book.value?.permission));
 const selectedSectionId = ref(null);
 const selectedMediaId = ref(null);
 const showVersionsDialog = ref(false);
@@ -618,9 +642,21 @@ function selectSection(id) {
   } else {
     sectionViewMode.value = "section";
   }
+  if (!canWrite.value && sectionViewMode.value === "recursive-edit") {
+    sectionViewMode.value = "recursive-view";
+  }
 }
 
+// Read-only access cannot use recursive editing; fall back if it was restored
+// from the per-type preference before the permission was known.
+watch(canWrite, (writable) => {
+  if (!writable && sectionViewMode.value === "recursive-edit") {
+    sectionViewMode.value = "recursive-view";
+  }
+});
+
 async function addChildSection(parentId, type = "text") {
+  if (!canWrite.value) return;
   const parent = sectionsStore.sections.find((s) => s.id === parentId);
   if (!parent || parent.type !== "container") return;
   try {
@@ -653,30 +689,45 @@ function queueSectionSave(sectionId, saveFn) {
 
 function saveSection(sectionId, data) {
   return queueSectionSave(sectionId, async () => {
+    if (!canWrite.value) return;
     saveStatus.markSaving();
     try {
-      await sectionsStore.update(sectionId, data);
+      // A 409 means someone saved first. Refresh the section list so the next
+      // attempt is rebuilt with the fresh revision, then retry up to twice
+      // before reporting a final conflict — no user input needed.
+      await saveWithConflictRetry({
+        save: () => sectionsStore.update(sectionId, data),
+        refresh: () => sectionsStore.fetchByBook(book.value.id),
+        onRetry: (attempt) => {
+          toastsStore.error(
+            `This section was modified on the server — retrying save (${attempt}/2).`,
+          );
+        },
+      });
       saveStatus.markSaved();
       clearDraft("section", sectionId);
     } catch (err) {
-      if (err?.response?.status === 409) {
-        // Someone else saved this section first: reload the server state and
-        // keep the local draft so the editor can retry on top of the new base.
+      const status = err?.response?.status;
+      if (status === 409) {
         saveStatus.markError("Section was modified by someone else");
         toastsStore.error(
-          "This section changed on the server — reloading the latest version.",
+          "This section kept changing on the server, so your latest edit was not saved. It is kept in the local draft — copy it before reloading to get the newest version.",
         );
         try {
           await sectionsStore.fetchByBook(book.value.id);
         } catch {
-          // Refetch failed; the stale local copy stays until the next autosave
+          // Refetch failed; the local copy stays until the next edit
         }
         return;
       }
       saveStatus.markError("Section save failed");
-      toastsStore.error(
-        "Section save failed — your text is kept locally and will retry.",
-      );
+      if (status === 400 && err.response?.data?.error) {
+        toastsStore.error(err.response.data.error);
+      } else {
+        toastsStore.error(
+          "Section save failed — your text is kept locally. Reload the page to retry.",
+        );
+      }
     }
   });
 }
@@ -687,7 +738,7 @@ async function updateSection(data) {
 }
 
 async function handleReorderChildren({ sourceIndex, targetIndex }) {
-  if (!currentSection.value) return;
+  if (!canWrite.value || !currentSection.value) return;
   const children = [...currentSectionChildren.value];
   if (sourceIndex < 0 || sourceIndex >= children.length) return;
   if (targetIndex < 0 || targetIndex >= children.length) return;
@@ -741,6 +792,7 @@ async function renumberChildren(parentId) {
 }
 
 async function handleTreeMove(id, parentId, orderIndex) {
+  if (!canWrite.value) return;
   const section = sectionsStore.sections.find((s) => s.id === id);
   const target = sectionsStore.sections.find((s) => s.id === parentId);
   if (!section || !target || target.type !== "container") return;
@@ -769,6 +821,7 @@ async function handleTreeMove(id, parentId, orderIndex) {
 }
 
 async function handleTreeReorder(id, parentId, orderIndex) {
+  if (!canWrite.value) return;
   const section = sectionsStore.sections.find((s) => s.id === id);
   if (!section) return;
   if (section.parentId !== parentId) {
@@ -786,6 +839,7 @@ async function handleTreeReorder(id, parentId, orderIndex) {
 }
 
 async function handleDuplicate(id) {
+  if (!canWrite.value) return;
   const section = sectionsStore.sections.find((s) => s.id === id);
   if (!section) return;
   if (section.parentId === null) {
@@ -811,6 +865,7 @@ async function handleDuplicate(id) {
 }
 
 function handleRename(id) {
+  if (!canWrite.value) return;
   const section = sectionsStore.sections.find((s) => s.id === id);
   if (!section) return;
   renameTarget.value = id;
@@ -818,6 +873,7 @@ function handleRename(id) {
 }
 
 async function confirmRename() {
+  if (!canWrite.value) return;
   const id = renameTarget.value;
   if (!id) return;
   const title = renameTitle.value.trim();
@@ -834,6 +890,7 @@ async function confirmRename() {
 }
 
 function handleMoveTo(id) {
+  if (!canWrite.value) return;
   const section = sectionsStore.sections.find((s) => s.id === id);
   if (!section) return;
   if (section.parentId === null) {
@@ -860,6 +917,7 @@ function moveOptionLabel(section) {
 }
 
 async function confirmMoveTo() {
+  if (!canWrite.value) return;
   const id = moveToTarget.value;
   const parentId = moveToParentId.value;
   if (!id || !parentId) return;
@@ -869,7 +927,7 @@ async function confirmMoveTo() {
 }
 
 async function handleSaveVersion() {
-  if (!book.value) return;
+  if (!canWrite.value || !book.value) return;
   savingVersion.value = true;
   try {
     await booksStore.createVersion(book.value.id, versionNote.value);
@@ -901,6 +959,7 @@ async function handleVersionRestored() {
 }
 
 function confirmDeleteSection(id) {
+  if (!canWrite.value) return;
   if (sectionsStore.rootSection?.id === id) {
     toastsStore.error("The root section cannot be deleted.");
     return;
@@ -909,7 +968,7 @@ function confirmDeleteSection(id) {
 }
 
 async function deleteSection() {
-  if (!deleteSectionTarget.value) return;
+  if (!canWrite.value || !deleteSectionTarget.value) return;
   try {
     await sectionsStore.remove(deleteSectionTarget.value);
     if (selectedSectionId.value === deleteSectionTarget.value) {
@@ -1170,6 +1229,18 @@ onMounted(() => {
 .nav-tab-actions {
   display: flex;
   gap: var(--space-2xs);
+}
+
+.read-only-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  padding: var(--space-2xs) var(--space-xs);
+  border: 1px dashed var(--pico-muted-border-color, #444);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--pico-muted-color, #aaa);
+  white-space: nowrap;
 }
 
 /* ============================================

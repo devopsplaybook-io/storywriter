@@ -229,4 +229,20 @@ describe("sections store — optimistic revision", () => {
     expect(store.sections[1].content).toBe("one two three");
     expect(store.sections[1].revision).toBe(3);
   });
+
+  it("update sends a structural type change with the stored revision", async () => {
+    const store = useSectionsStore();
+    seedSections(store);
+    mockedApi.put.mockResolvedValueOnce({
+      data: { ...store.sections[1], type: "media", revision: 4 },
+    });
+
+    await store.update("s2", { type: "media" });
+
+    expect(mockedApi.put).toHaveBeenCalledWith("/sections/s2", {
+      revision: 3,
+      type: "media",
+    });
+    expect(store.sections[1].type).toBe("media");
+  });
 });

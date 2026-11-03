@@ -25,13 +25,27 @@ interface JwtPayload {
   role: "admin" | "user";
 }
 
+// localStorage can hold anything (old versions, manual edits, other apps on
+// the same origin); a malformed "user" entry must not break the store.
+function readStoredUser(): Record<string, unknown> | null {
+  const raw = localStorage.getItem("user");
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Fall through: drop the corrupted entry
+  }
+  localStorage.removeItem("user");
+  return null;
+}
+
 export const useAuthStore = defineStore("auth", {
   state: () => ({
     token: localStorage.getItem("token") || "",
-    user: JSON.parse(localStorage.getItem("user") || "null") as Record<
-      string,
-      unknown
-    > | null,
+    user: readStoredUser(),
     initialized: false,
   }),
 

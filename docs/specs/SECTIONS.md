@@ -41,6 +41,15 @@ Sections are the structural building blocks of a book. They form a hierarchical 
 - [x] Caption has Edit/Preview tabs.
 - [x] Displayed with an image icon in the tree.
 
+## Changing the Structural Type
+
+- [x] The structural type (`text`, `container`, `media`) can be changed with a dropdown in the editor header; the choice is emitted through the normal save path, so autosave, drafts and conflict handling apply.
+- [x] `POST /api/sections` and `PUT /api/sections/:id` validate `type`: any value other than `text`, `container` or `media` is rejected with `400 { error }`.
+- [x] The **root** section must stay a container; converting it to `text` or `media` is rejected with `400`.
+- [x] A **container with children** cannot become `text` or `media`; its children must be moved or deleted first (`400`). An empty container can be converted.
+- [x] Changing the type never destroys existing data: `content` survives text/container/media transitions and `caption`/`mediaId` survive container/text transitions.
+- [x] The dropdown disables impossible choices and explains why (root, or a container that still has children).
+
 ## Section Type Labels
 
 - [x] Books can define **Section Type Labels** (e.g., "Chapter", "Scene", "Prologue").
@@ -84,7 +93,7 @@ Sections are the structural building blocks of a book. They form a hierarchical 
 - [x] The browser warns before closing or reloading the tab while there is unsaved work (`beforeunload` guard).
 - [x] A local draft buffer (localStorage) keeps in-flight text so it survives a crash, tab close or network loss, and is restored on the next open.
 - [x] **Conflict detection**: `PUT /api/sections/:id` accepts the section's current `revision`; when it no longer matches the server the update is rejected with `409` and the current revision. Requests without a `revision` update unconditionally (backwards compatible for API scripts).
-- [x] The web client sends the stored revision with every save; on a `409` the editor shows an error, keeps the local draft, reloads the book's sections and retries the save on the next autosave tick on top of the fresh state.
+- [x] The web client sends the stored revision with every save. On a `409` it refreshes the book's sections and **retries automatically**: the initial attempt plus up to **2 retries**, each rebuilt with the fresh revision, so a concurrent save no longer needs manual action. A failed retry shows a short toast; a final `409` keeps the local draft and asks the author to reload before trying again. Saves are serialized per section, so an older payload can never land after a newer one.
 - [x] A **live word count** for the section (markdown stripped) is shown in the editor header and updates per keystroke.
 - [x] The sidebar shows the **running word total for the book**, live between autosave ticks; when a writing goal is set it shows the target, the percentage and a progress bar.
 - [x] **Focus mode** collapses the sidebar, book nav and global header for distraction-free writing (centered measure); toggled via the editor button or Ctrl/Cmd+Shift+F, exits with Escape; an optional typewriter-scrolling preference persists in localStorage.
@@ -97,12 +106,12 @@ Sections are the structural building blocks of a book. They form a hierarchical 
 - [x] Sections can be restructured by drag-and-drop in the tree: dropping on a container moves the section under it; dropping between siblings reorders it.
 - [x] The root section cannot be moved, and a section cannot be moved into its own subtree.
 - [x] A tree node context menu (also via right-click) offers rename, duplicate, move to… and delete.
-- [x] Duplicating a section copies it with its whole subtree, keeping type, media and caption; the copy is inserted right after the original.
+- [x] Duplicating a section copies it with its whole subtree, keeping type, media, caption and the section-type labels of every copied section; the copy is inserted right after the original.
 - [x] Copying into the section's own subtree, across books, or copying the root is rejected with `400`.
-- [x] Copy is bounded (`MAX_COPY_NODES = 1000`, `MAX_COPY_DEPTH = 100`) and inserted as one batched multi-row INSERT, so a failed copy leaves no partial tree.
+- [x] Copy is bounded (`MAX_COPY_NODES = 1000`, `MAX_COPY_DEPTH = 100`) and inserted as one batched multi-row INSERT, together with the copied labels, in a single transaction, so a failed copy leaves no partial tree and no orphaned assignments.
 - [x] Duplicated sections start with **empty AI notes** (regenerable content is not copied).
 - [x] A keyboard-accessible "Move to…" dialog moves a section to any allowed container for touch and screen-reader users.
 
 _API: `PUT /api/sections/:id` accepts `analysis` and the optimistic `revision`; `POST /api/sections/:id/analysis` regenerates the AI notes; `POST /api/sections/:id/ai-action` runs an AI action (see ANALYSIS.md)._
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-25_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-11-03_

@@ -67,6 +67,10 @@ The book detail page uses a **responsive split-pane layout** following the feedw
 - [x] **AI availability state**: when the server has no LLM configured, AI controls (Generate Analysis, AI Notes generation, AI actions menu) are disabled with a clear explanation instead of failing; the analysis panel shows the same explanation.
 - [x] **AI Notes tab** in the section editor: editable AI notes for the section with a Generate Analysis button (see SECTIONS.md / ANALYSIS.md).
 - [x] **AI actions menu** in the editor toolbar: result dialog with Insert at Cursor / Save to AI Notes / Discard.
+- [x] **Permission-aware read-only mode**: the page derives write access from the book's `permission` (`read`, `write`, `owner` or `admin`); a missing permission counts as read-only. Readers see a **Read-only** badge in the book nav and a lock indicator in the editor, and the editor fields, section-type dropdown and label badges are read-only/disabled.
+- [x] Read-only users can still read and search sections, view previews and AI notes, browse attributes/properties/media, and export the book; the recursive **Edit** view mode is not offered (falls back to View).
+- [x] Write actions are hidden or disabled for read-only users: add/rename/duplicate/move/delete section, drag-and-drop restructuring, Save Version and version restore, attribute/property edits, media upload/slug/delete, AI note generation and AI actions.
+- [x] Handlers re-check write access before sending a write request, so a hidden control can never save.
 
 ### Admin (`/admin`)
 
@@ -97,4 +101,4 @@ The book detail page uses a **responsive split-pane layout** following the feedw
 - [x] **Markdown body**: `.markdown-body` class for rendered markdown content.
 - [x] **Design tokens**: CSS custom properties for spacing (`--space-*`), radius (`--radius-*`), typography (`--text-*`), transitions (`--transition-*`), and shadows (`--shadow-*`).
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-24_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-11-03_

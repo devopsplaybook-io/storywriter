@@ -41,11 +41,14 @@ export class MediaRoutes {
     function generateSlug(filename: string): string {
       // Remove extension
       const nameWithoutExt = filename.replace(/\.[^/.]+$/, "");
-      return nameWithoutExt
+      const slug = nameWithoutExt
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "")
         .substring(0, 150);
+      // Non-Latin filenames sanitize to nothing: fall back to a fixed base
+      // so a slug is always non-empty (uniqueness is handled below).
+      return slug || "media";
     }
 
     // Helper: ensure slug uniqueness
@@ -53,10 +56,11 @@ export class MediaRoutes {
       bookId: string,
       slug: string,
     ): Promise<string> {
-      let candidate = slug;
+      const base = slug || "media";
+      let candidate = base;
       let counter = 1;
       while (await MediaDataGetBySlug(bookId, candidate)) {
-        candidate = `${slug}-${counter}`;
+        candidate = `${base}-${counter}`;
         counter++;
       }
       return candidate;

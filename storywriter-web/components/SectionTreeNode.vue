@@ -13,7 +13,7 @@
         'drag-over-after': dropMode === 'after',
         'menu-open': showMenu,
       }"
-      draggable="true"
+      :draggable="!readOnly"
       @click="$emit('select', section.id)"
       @dragstart="onDragStart"
       @dragover="onDragOver"
@@ -24,7 +24,7 @@
     >
       <i :class="sectionIcon" />
       <span class="tree-label">{{ section.title || "Untitled" }}</span>
-      <span class="tree-actions">
+      <span v-if="!readOnly" class="tree-actions">
         <span v-if="section.type === 'container'" class="add-child-wrap">
           <i
             class="bi bi-plus-lg"
@@ -80,6 +80,7 @@
         :selected-id="selectedId"
         :get-children="getChildren"
         :depth="depth + 1"
+        :read-only="readOnly"
         @select="(id) => $emit('select', id)"
         @add-child="(id, type) => $emit('add-child', id, type)"
         @move="
@@ -108,6 +109,7 @@ const props = defineProps({
   selectedId: { type: String, default: null },
   getChildren: { type: Function, required: true },
   depth: { type: Number, default: 1 },
+  readOnly: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -144,6 +146,10 @@ function collectSubtreeIds(id) {
 }
 
 function onDragStart(event) {
+  if (props.readOnly) {
+    event.preventDefault();
+    return;
+  }
   treeDrag.value = {
     id: props.section.id,
     subtreeIds: collectSubtreeIds(props.section.id),
@@ -153,6 +159,7 @@ function onDragStart(event) {
 }
 
 function onDragOver(event) {
+  if (props.readOnly) return;
   const drag = treeDrag.value;
   if (!drag || drag.subtreeIds.includes(props.section.id)) return;
   const rect = event.currentTarget.getBoundingClientRect();
@@ -170,7 +177,8 @@ function onDrop(event) {
   const drag = treeDrag.value;
   const mode = dropMode.value;
   clearDrop();
-  if (!drag || !mode || drag.subtreeIds.includes(props.section.id)) return;
+  if (props.readOnly || !drag || !mode || drag.subtreeIds.includes(props.section.id))
+    return;
   if (mode === "into") {
     emit("move", drag.id, props.section.id, children.value.length);
     return;
