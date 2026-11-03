@@ -41,4 +41,12 @@ Books are the top-level organizational unit in Storywriter. Each book represents
 - [x] Book list/detail responses include `ownerId` and the caller's `permission` (`admin`/`owner`/`write`/`read`/null).
 - [x] Book version **list and metadata responses omit the heavy `snapshot`** (the queries select metadata plus the snapshot `size` only); clients fetch the payload from the read-checked `GET /api/books/:id/versions/:versionId/snapshot` or restore via POST.
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-31_
+## Version Snapshots
+
+- [x] A snapshot captures the book content: sections (including AI notes), attributes, media metadata, property definitions and their section values, and the book `name`, `description` and `writingGoal`.
+- [x] Ownership and access grants are **not** part of a snapshot: restoring a version never changes who can access the book.
+- [x] Restoring a version restores the captured book metadata together with the content, atomically in one transaction.
+- [x] Legacy snapshots without book metadata still restore: their content is restored and the current book metadata is left unchanged.
+- [x] Version numbers are unique per book (`UNIQUE(bookId, versionNumber)`); concurrent creations retry number allocation instead of silently sharing a number.
+
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-11-03_
