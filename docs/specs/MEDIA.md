@@ -27,6 +27,9 @@ Media items (pictures) can be attached to books and referenced by sections. Medi
 - [x] Must be unique within a book (enforced by database constraint)
 - [x] Slugs are sanitized: lowercase, alphanumeric + hyphens only
 - [x] Automatic suffix `-1`, `-2`, etc. for duplicate slugs on upload
+- [x] A filename with no usable characters after sanitizing (for example a
+  non-Latin name such as `小说.png`) falls back to `media`; duplicates then
+  become `media-1`, `media-2`, … so a slug is never empty
 
 ## Upload
 

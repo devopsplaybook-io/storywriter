@@ -3,6 +3,7 @@
     <header class="analysis-header">
       <h3><i class="bi bi-lightbulb" /> Book Analysis</h3>
       <button
+        v-if="!readOnly"
         class="btn-small"
         :aria-busy="generating"
         :disabled="generating || !llmAvailable"
@@ -39,6 +40,7 @@
       <i class="bi bi-lightbulb" />
       <p>No analysis yet. Click Generate to analyze your book.</p>
       <button
+        v-if="!readOnly"
         :aria-busy="generating"
         :disabled="generating || !llmAvailable"
         :title="llmAvailable ? null : aiUnavailableTitle"
@@ -134,6 +136,7 @@ const props = defineProps({
     type: String,
     required: true,
   },
+  readOnly: { type: Boolean, default: false },
 });
 
 const booksStore = useBooksStore();
@@ -160,7 +163,7 @@ async function loadCachedAnalysis() {
 }
 
 async function generate() {
-  if (generating.value || !llmAvailable.value) return;
+  if (props.readOnly || generating.value || !llmAvailable.value) return;
   generating.value = true;
   error.value = null;
   try {

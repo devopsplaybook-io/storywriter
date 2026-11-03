@@ -147,6 +147,29 @@ describe("Media routes", () => {
     expect(res.statusCode).toBe(401);
   });
 
+  it("falls back to a non-empty slug when the filename has no Latin characters", async () => {
+    const first = await server.uploadMedia(
+      user.token,
+      bookId,
+      "小说.png",
+      PNG_BYTES,
+      "image/png",
+    );
+    expect(first.statusCode).toBe(201);
+    expect(JSON.parse(first.body).slug).toBe("media");
+
+    // Uniqueness still applies to the fallback slug.
+    const second = await server.uploadMedia(
+      user.token,
+      bookId,
+      "封面.png",
+      PNG_BYTES,
+      "image/png",
+    );
+    expect(second.statusCode).toBe(201);
+    expect(JSON.parse(second.body).slug).toBe("media-1");
+  });
+
   it("returns 415 for stored media whose MIME type is not allow-listed", async () => {
     // A legacy row with a non-image MIME type (e.g. from an old import).
     const result = await server.exec(

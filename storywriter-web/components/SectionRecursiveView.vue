@@ -13,13 +13,13 @@
         class="section-block"
         :class="[
           'depth-' + Math.min(item.depth, 4),
-          { editing: mode === 'edit' },
+          { editing: isEditing },
         ]"
         :data-section-id="item.id"
       >
         <div v-if="visibleSections.has(item.id)" class="section-block-content">
           <!-- ===== VIEW MODE ===== -->
-          <template v-if="mode !== 'edit'">
+          <template v-if="!isEditing">
             <h3
               class="section-block-title"
               :class="'title-depth-' + Math.min(item.depth, 4)"
@@ -160,9 +160,14 @@ const props = defineProps({
   section: { type: Object, required: true },
   getChildren: { type: Function, required: true },
   mode: { type: String, default: "view" },
+  readOnly: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["update-section"]);
+
+const isEditing = computed(
+  () => props.mode === "edit" && !props.readOnly,
+);
 
 const mediaStore = useMediaStore();
 const visibleSections = ref(new Set());
@@ -261,6 +266,7 @@ function getMediaUrl(item) {
 }
 
 function onTitleBlur(item, event) {
+  if (props.readOnly) return;
   const newTitle = event.target.value;
   if (newTitle !== item.title) {
     emit("update-section", { sectionId: item.id, data: { title: newTitle } });
@@ -268,6 +274,7 @@ function onTitleBlur(item, event) {
 }
 
 function onContentBlur(item, event) {
+  if (props.readOnly) return;
   const newContent = event.target.value;
   if (newContent !== item.content) {
     emit("update-section", {
@@ -281,6 +288,7 @@ function onContentBlur(item, event) {
 const pendingEdits = reactive({});
 
 function recordPendingEdit(sectionId, field, value) {
+  if (props.readOnly) return;
   const pending = pendingEdits[sectionId] || {};
   pending[field] = value;
   pendingEdits[sectionId] = pending;
@@ -291,6 +299,7 @@ function onTitleInput(item, event) {
 }
 
 function flushPendingEdits() {
+  if (props.readOnly) return;
   for (const sectionId of Object.keys(pendingEdits)) {
     const pending = pendingEdits[sectionId];
     const item = flatSections.value.find((s) => s.id === sectionId);

@@ -52,7 +52,7 @@
             <button class="secondary" @click="loadVersionSections">
               <i class="bi bi-eye" /> View this version
             </button>
-            <button class="contrast" @click="confirmRestore">
+            <button v-if="!readOnly" class="contrast" @click="confirmRestore">
               <i class="bi bi-arrow-counterclockwise" /> Restore this version
             </button>
           </footer>
@@ -129,6 +129,7 @@ import { useToastsStore } from "../stores/toasts";
 const props = defineProps({
   open: { type: Boolean, default: false },
   bookId: { type: String, default: null },
+  readOnly: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["close", "load-version", "close-version", "restored"]);
@@ -192,11 +193,12 @@ function loadVersionSections() {
 }
 
 function confirmRestore() {
+  if (props.readOnly) return;
   showRestoreConfirm.value = true;
 }
 
 async function restoreVersion() {
-  if (!viewingVersion.value || !props.bookId) return;
+  if (props.readOnly || !viewingVersion.value || !props.bookId) return;
   restoring.value = true;
   try {
     await booksStore.restoreVersion(props.bookId, viewingVersion.value.id);

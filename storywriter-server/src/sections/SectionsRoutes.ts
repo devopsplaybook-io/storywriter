@@ -1,5 +1,5 @@
 import { FastifyInstance, RequestGenericInterface } from "fastify";
-import { Section, SectionType } from "../model/Section";
+import { Section, SectionType, IsSectionType } from "../model/Section";
 import { CheckBookAccess } from "../books/BookAccess";
 import { MediaDataGet } from "../media/MediaData";
 import {
@@ -12,6 +12,7 @@ import {
   MAX_COPY_DEPTH,
   MAX_COPY_NODES,
   SectionsConflictError,
+  SectionsAnalysisConflictError,
   SectionsDataAdd,
   SectionsDataCopy,
   SectionsDataDelete,
@@ -48,6 +49,15 @@ export class SectionsRoutes {
     function sendAiError(req: any, res: any, error: unknown): void {
       if (error instanceof LlmUnavailableError) {
         res.status(503).send({ error: error.message });
+        return;
+      }
+      if (error instanceof SectionsAnalysisConflictError) {
+        res.status(409).send({
+          error: "AI notes changed while generating",
+          analysis: error.generatedAnalysis,
+          currentAnalysis: error.section?.analysis ?? null,
+          revision: error.section?.revision ?? null,
+        });
         return;
       }
       if (error instanceof SectionsConflictError) {
@@ -144,6 +154,10 @@ export class SectionsRoutes {
       }
       if (!(await CheckBookAccess(req, res, req.body.bookId, "write"))) return;
 
+      if (req.body.type !== undefined && !IsSectionType(req.body.type)) {
+        return res.status(400).send({ error: "Invalid section type" });
+      }
+
       // Only container sections can have children
       const parent = await SectionsDataGet(req.body.parentId);
       if (!parent) {
@@ -185,6 +199,7 @@ export class SectionsRoutes {
     interface PutSection extends RequestGenericInterface {
       Params: { id: string };
       Body: {
+        type?: SectionType;
         title?: string;
         content?: string;
         analysis?: string;
@@ -200,6 +215,28 @@ export class SectionsRoutes {
       }
       if (!(await CheckBookAccess(req, res, section.bookId, "write"))) return;
 
+      if (req.body.type !== undefined && !IsSectionType(req.body.type)) {
+        return res.status(400).send({ error: "Invalid section type" });
+      }
+      if (req.body.type !== undefined && req.body.type !== section.type) {
+        if (section.parentId === null && req.body.type !== "container") {
+          return res
+            .status(400)
+            .send({ error: "The root section must stay a container" });
+        }
+        if (section.type === "container") {
+          const children = await SectionsDataListChildren(
+            section.id,
+            section.bookId,
+          );
+          if (children.length > 0) {
+            return res.status(400).send({
+              error: "Move or delete the sub-sections before changing the container type",
+            });
+          }
+        }
+      }
+
       if (req.body.mediaId) {
         const media = await MediaDataGet(req.body.mediaId);
         if (!media || media.bookId !== section.bookId) {
@@ -209,6 +246,7 @@ export class SectionsRoutes {
         }
       }
 
+      if (req.body.type !== undefined) section.type = req.body.type;
       if (req.body.title !== undefined) section.title = req.body.title;
       if (req.body.content !== undefined) section.content = req.body.content;
       if (req.body.analysis !== undefined) section.analysis = req.body.analysis;

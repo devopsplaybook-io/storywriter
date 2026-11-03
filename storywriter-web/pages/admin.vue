@@ -170,6 +170,7 @@ import {
 import { useLlmStore } from "../stores/llm";
 
 const authStore = useAuthStore();
+const toastsStore = useToastsStore();
 const router = useRouter();
 const llm = useLlmStore();
 
@@ -204,7 +205,7 @@ async function createUser() {
     showCreateDialog.value = false;
     newUser.value = { name: "", password: "", role: "user" };
   } catch (e) {
-    alert(e.response?.data?.error || "Failed to create user");
+    toastsStore.error(e.response?.data?.error || "Failed to create user");
   } finally {
     creating.value = false;
   }
@@ -215,7 +216,7 @@ async function updateRole(userId, role) {
     await api.put(`/users/${userId}`, { role });
     await fetchUsers();
   } catch (e) {
-    alert(e.response?.data?.error || "Failed to update role");
+    toastsStore.error(e.response?.data?.error || "Failed to update role");
   }
 }
 
@@ -231,7 +232,7 @@ async function deleteUser() {
     users.value = users.value.filter((u) => u.id !== deleteTarget.value.id);
     deleteTarget.value = null;
   } catch (e) {
-    alert(e.response?.data?.error || "Failed to delete user");
+    toastsStore.error(e.response?.data?.error || "Failed to delete user");
   } finally {
     deleting.value = false;
   }

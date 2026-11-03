@@ -7,6 +7,7 @@
           class="title-input"
           type="text"
           placeholder="Section title"
+          :readonly="readOnly"
           @blur="saveTitle"
           @keydown.enter="$refs.contentRef?.focus()"
         />
@@ -23,10 +24,26 @@
             <i :class="statusIcon" />
             {{ statusLabel }}
           </span>
-          <span class="type-badge">
-            <i :class="typeIcon" />
-            {{ section.type }}
+          <span v-if="readOnly" class="read-only-indicator" title="You have read-only access to this book">
+            <i class="bi bi-lock" /> Read-only
           </span>
+          <select
+            class="type-badge type-select"
+            :value="section.type"
+            :disabled="readOnly"
+            :title="readOnly ? 'Read-only access' : 'Structural type of this section'"
+            @change="saveType"
+          >
+            <option
+              v-for="choice in typeChoices"
+              :key="choice.value"
+              :value="choice.value"
+              :disabled="choice.disabled"
+              :title="choice.reason"
+            >
+              {{ choice.label }}
+            </option>
+          </select>
           <button
             v-if="focusMode"
             class="btn-icon"
@@ -56,6 +73,7 @@
             :key="typeName"
             class="category-badge"
             :class="{ active: assignedSectionTypes.includes(typeName) }"
+            :disabled="readOnly"
             @click="toggleSectionType(typeName)"
           >
             {{ typeName }}
@@ -68,6 +86,7 @@
         v-if="section.type === 'container'"
         :children="children"
         :get-children="getChildren"
+        :read-only="readOnly"
         @reorder="(payload) => $emit('reorder', payload)"
       />
 
@@ -75,7 +94,7 @@
       <div v-if="section.type === 'media'" class="media-section">
         <div class="media-selector">
           <label>Select media:</label>
-          <select v-model="selectedMediaId" @change="saveMediaId">
+          <select v-model="selectedMediaId" :disabled="readOnly" @change="saveMediaId">
             <option value="">-- No media selected --</option>
             <option v-for="m in mediaList" :key="m.id" :value="m.id">
               {{ m.slug }}
@@ -92,6 +111,7 @@
             class="caption-textarea"
             placeholder="Enter caption..."
             rows="3"
+            :readonly="readOnly"
             @blur="saveCaption"
           />
           <div
@@ -124,7 +144,7 @@
               <i class="bi bi-stars" /> AI Notes
             </button>
           </div>
-          <div class="format-toolbar">
+          <div v-if="!readOnly" class="format-toolbar">
             <button title="Bold (Ctrl/Cmd+B)" @click.prevent="applyFormat('bold')"><i class="bi bi-type-bold" /></button>
             <button title="Italic (Ctrl/Cmd+I)" @click.prevent="applyFormat('italic')"><i class="bi bi-type-italic" /></button>
             <button title="Heading (H2)" @click.prevent="applyFormat('h2')"><i class="bi bi-type-h2" /></button>
@@ -170,7 +190,7 @@
         </div>
 
         <div
-          v-if="findOpen"
+          v-if="findOpen && !readOnly"
           class="find-replace-bar"
           @keydown.esc.prevent="closeFind"
         >
@@ -217,6 +237,7 @@
             v-model="content"
             class="content-textarea"
             placeholder="Write your content in markdown..."
+            :readonly="readOnly"
             @blur="saveContent"
             @keydown="onTextareaKeydown"
             @input="onCaretMoved"
@@ -238,6 +259,7 @@
               They are not part of the book content.
             </span>
             <button
+              v-if="!readOnly"
               class="generate-notes-btn"
               :aria-busy="generatingNotes"
               :disabled="generatingNotes || !llmAvailable"
@@ -255,6 +277,7 @@
             v-model="analysis"
             class="analysis-textarea"
             placeholder="AI notes for this section — what happens, continuity points, ideas..."
+            :readonly="readOnly"
           />
         </div>
       </div>
@@ -300,13 +323,40 @@
             <p>Working on it…</p>
           </div>
           <p v-else-if="aiError" class="ai-result-error">{{ aiError }}</p>
+          <div v-else-if="aiConflict" class="ai-conflict">
+            <p class="ai-conflict-hint">
+              The notes changed while the AI was writing. Choose the version to
+              keep — nothing is overwritten until you choose.
+            </p>
+            <div class="ai-conflict-version">
+              <h4>Generated notes</h4>
+              <pre class="ai-result-text">{{ aiResult }}</pre>
+            </div>
+            <div class="ai-conflict-version">
+              <h4>Current notes</h4>
+              <pre class="ai-result-text">{{ aiCurrentNotes }}</pre>
+            </div>
+          </div>
           <pre v-else class="ai-result-text">{{ aiResult }}</pre>
           <footer v-if="!aiRunning && !aiError" class="dialog-footer">
-            <button class="secondary" @click="discardAiResult">Discard</button>
-            <button class="secondary" @click="saveAiResultToNotes">
-              Save to AI Notes
-            </button>
-            <button @click="insertAiResult">Insert at Cursor</button>
+            <template v-if="aiConflict">
+              <button class="secondary" @click="keepCurrentNotes">
+                Keep Current Notes
+              </button>
+              <button @click="useGeneratedNotes">Use Generated Notes</button>
+            </template>
+            <template v-else>
+              <button class="secondary" @click="discardAiResult">Discard</button>
+              <button class="secondary" @click="saveAiResultToNotes">
+                Save to AI Notes
+              </button>
+              <button
+                v-if="aiResultAction !== 'analysis'"
+                @click="insertAiResult"
+              >
+                Insert at Cursor
+              </button>
+            </template>
           </footer>
           <footer v-else class="dialog-footer">
             <button class="secondary" @click="discardAiResult">Close</button>
@@ -339,6 +389,7 @@ import {
 import { AI_ACTIONS } from "../utils/aiActions";
 import { countWords } from "../utils/wordCount";
 import { renderMarkdown } from "../utils/safeMarkdown";
+import { sectionTypeChoices } from "../utils/sectionTypes";
 import {
   insertLink,
   insertPrefix,
@@ -352,6 +403,7 @@ const props = defineProps({
   children: { type: Array, default: () => [] },
   getChildren: { type: Function, default: () => () => [] },
   focusMode: { type: Boolean, default: false },
+  readOnly: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["update", "reorder", "toggle-focus"]);
@@ -378,16 +430,9 @@ const aiUnavailableTitle =
 const aiActions = AI_ACTIONS;
 
 const title = ref("");
-const typeIcon = computed(() => {
-  switch (props.section?.type) {
-    case "container":
-      return "bi bi-folder";
-    case "media":
-      return "bi bi-image";
-    default:
-      return "bi bi-file-text";
-  }
-});
+const typeChoices = computed(() =>
+  sectionTypeChoices(props.section, props.children.length),
+);
 
 const availableSectionTypes = computed(() => {
   const prop = propertiesStore.sectionTypeProperty;
@@ -613,7 +658,7 @@ function replaceAll() {
 }
 
 async function toggleSectionType(typeName) {
-  if (!props.section) return;
+  if (props.readOnly || !props.section) return;
   const prop = propertiesStore.sectionTypeProperty;
   if (!prop) return;
   await propertiesStore.toggleSectionType(props.section.id, prop.id, typeName);
@@ -780,7 +825,7 @@ watchDebounced(
     if (!props.section) return;
     const data = diffFromServer();
     if (Object.keys(data).length > 0) {
-      emit("update", data);
+      emitUpdate(data);
     } else if (saveStatus.status === "unsaved") {
       saveStatus.markIdle();
     }
@@ -792,7 +837,7 @@ watchDebounced(
 watchDebounced(
   [title, content, analysis, caption, selectedMediaId],
   () => {
-    if (!props.section) return;
+    if (!props.section || props.readOnly) return;
     if (Object.keys(diffFromServer()).length === 0) return;
     writeDraft("section", props.section.id, currentDraft());
   },
@@ -800,7 +845,7 @@ watchDebounced(
 );
 
 function flushDraftOnUnload() {
-  if (!props.section) return;
+  if (!props.section || props.readOnly) return;
   if (saveStatus.isDirty) {
     writeDraft("section", props.section.id, currentDraft());
   }
@@ -846,14 +891,29 @@ const statusLabel = computed(() => {
   }
 });
 
+function emitUpdate(data) {
+  if (props.readOnly) return;
+  emit("update", data);
+}
+
+function saveType(event) {
+  if (props.readOnly || !props.section) return;
+  const nextType = event?.target?.value;
+  // Snap the control back to the stored type: it only moves once the save
+  // actually persists, so a rejected change never leaves a false UI state.
+  if (event?.target) event.target.value = props.section.type;
+  if (!nextType || nextType === props.section.type) return;
+  emit("update", { type: nextType });
+}
+
 function saveTitle() {
   if (!props.section || title.value === (props.section.title || "")) return;
-  emit("update", { title: title.value });
+  emitUpdate({ title: title.value });
 }
 
 function saveContent() {
   if (!props.section || content.value === (props.section.content || "")) return;
-  emit("update", { content: content.value });
+  emitUpdate({ content: content.value });
 }
 
 function saveMediaId() {
@@ -862,12 +922,12 @@ function saveMediaId() {
     selectedMediaId.value === (props.section.mediaId || null)
   )
     return;
-  emit("update", { mediaId: selectedMediaId.value || null });
+  emitUpdate({ mediaId: selectedMediaId.value || null });
 }
 
 function saveCaption() {
   if (!props.section || caption.value === (props.section.caption || "")) return;
-  emit("update", { caption: caption.value });
+  emitUpdate({ caption: caption.value });
 }
 
 // ==================== AI notes & AI actions ====================
@@ -879,13 +939,17 @@ const aiRunning = ref(false);
 const aiResult = ref(null);
 const aiResultAction = ref(null);
 const aiError = ref(null);
+const aiConflict = ref(false);
+const aiCurrentNotes = ref("");
 
 const aiResultActionLabel = computed(() => {
+  if (aiResultAction.value === "analysis") return "notes";
   const action = AI_ACTIONS.find((a) => a.id === aiResultAction.value);
   return action ? action.label : "";
 });
 
 function startGenerateNotes() {
+  if (props.readOnly) return;
   if (analysis.value.trim()) {
     showOverwriteConfirm.value = true;
     return;
@@ -895,14 +959,34 @@ function startGenerateNotes() {
 
 async function generateNotes() {
   showOverwriteConfirm.value = false;
-  if (!props.section || generatingNotes.value) return;
+  if (props.readOnly || !props.section || generatingNotes.value) return;
   generatingNotes.value = true;
   try {
     const updated = await sectionsStore.analyzeSection(props.section.id);
     analysis.value = updated.analysis || "";
   } catch (err) {
+    const body = err.response?.data;
+    if (err.response?.status === 409 && typeof body?.analysis === "string") {
+      // The notes were edited while the LLM was running. Never overwrite them:
+      // offer the generated and the current version, and let the author choose.
+      aiConflict.value = true;
+      aiCurrentNotes.value = body.currentAnalysis || "";
+      aiResult.value = body.analysis;
+      aiResultAction.value = "analysis";
+      aiError.value = null;
+      aiDialogOpen.value = true;
+      try {
+        await sectionsStore.fetchByBook(props.section.bookId);
+      } catch {
+        // Both versions are already in the response; refresh is best-effort
+      }
+      toastsStore.error(
+        "AI notes changed while generating — choose which version to keep.",
+      );
+      return;
+    }
     toastsStore.error(
-      err.response?.data?.error || "AI analysis generation failed.",
+      body?.error || "AI analysis generation failed.",
     );
   } finally {
     generatingNotes.value = false;
@@ -910,11 +994,13 @@ async function generateNotes() {
 }
 
 async function runAiAction(actionId) {
-  if (!props.section || aiRunning.value) return;
+  if (props.readOnly || !props.section || aiRunning.value) return;
   aiMenu.value?.removeAttribute("open");
   aiResultAction.value = actionId;
   aiResult.value = null;
   aiError.value = null;
+  aiConflict.value = false;
+  aiCurrentNotes.value = "";
   aiDialogOpen.value = true;
   aiRunning.value = true;
   try {
@@ -943,6 +1029,20 @@ function discardAiResult() {
   aiDialogOpen.value = false;
   aiResult.value = null;
   aiError.value = null;
+  aiConflict.value = false;
+  aiCurrentNotes.value = "";
+}
+
+function keepCurrentNotes() {
+  analysis.value = aiCurrentNotes.value;
+  discardAiResult();
+  tab.value = "notes";
+}
+
+function useGeneratedNotes() {
+  analysis.value = aiResult.value || "";
+  discardAiResult();
+  tab.value = "notes";
 }
 
 async function insertAiResult() {
@@ -1060,6 +1160,35 @@ function saveAiResultToNotes() {
   color: var(--pico-muted-color, #aaa);
   text-transform: capitalize;
   white-space: nowrap;
+}
+
+.type-select {
+  width: auto;
+  margin: 0;
+  border: none;
+  cursor: pointer;
+}
+
+.type-select:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+
+.read-only-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  padding: var(--space-2xs) var(--space-xs);
+  border: 1px dashed var(--pico-muted-border-color, #444);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--pico-muted-color, #aaa);
+  white-space: nowrap;
+}
+
+.category-badge:disabled {
+  cursor: default;
+  opacity: 0.7;
 }
 
 .save-status {
@@ -1494,6 +1623,26 @@ function saveAiResultToNotes() {
 
 .ai-result-error {
   color: var(--pico-del-color, #c0392b);
+}
+
+.ai-conflict {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.ai-conflict-hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--pico-muted-color);
+}
+
+.ai-conflict-version h4 {
+  margin: 0 0 var(--space-2xs);
+  font-size: var(--text-sm);
+}
+
+.ai-conflict-version .ai-result-text {
+  max-height: 22vh;
 }
 
 .ai-result-loading {

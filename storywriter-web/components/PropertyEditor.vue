@@ -9,7 +9,7 @@
         </p>
       </div>
       <button
-        v-if="!sectionTypeProp"
+        v-if="!sectionTypeProp && !readOnly"
         class="btn-small"
         @click="createDefaultProperty"
       >
@@ -31,6 +31,7 @@
             {{ typeUsage(opt) }}
           </span>
           <i
+            v-if="!readOnly"
             class="bi bi-x-lg"
             title="Remove type"
             @click="removeType(opt)"
@@ -42,7 +43,7 @@
       </div>
 
       <!-- Add new type -->
-      <div class="add-type-row">
+      <div v-if="!readOnly" class="add-type-row">
         <input
           v-model="newTypeName"
           type="text"
@@ -60,7 +61,7 @@
       </div>
 
       <!-- Danger zone -->
-      <div class="danger-zone">
+      <div v-if="!readOnly" class="danger-zone">
         <div class="danger-text">
           <strong>Danger zone</strong>
           <span>
@@ -84,6 +85,7 @@
 <script setup>
 const props = defineProps({
   bookId: { type: String, default: null },
+  readOnly: { type: Boolean, default: false },
 });
 
 const propertiesStore = usePropertiesStore();
@@ -103,7 +105,7 @@ watch(
 );
 
 async function createDefaultProperty() {
-  if (!props.bookId) return;
+  if (props.readOnly || !props.bookId) return;
   await propertiesStore.create(props.bookId, "Section Types", ["Chapter"]);
 }
 
@@ -126,6 +128,7 @@ function typeUsage(typeName) {
 }
 
 async function addType() {
+  if (props.readOnly) return;
   const name = newTypeName.value.trim();
   if (!name || !sectionTypeProp.value) return;
   // Avoid duplicates
@@ -141,7 +144,7 @@ async function addType() {
 }
 
 async function removeType(typeName) {
-  if (!sectionTypeProp.value) return;
+  if (props.readOnly || !sectionTypeProp.value) return;
   const usage = typeUsage(typeName);
   const message =
     usage > 0
@@ -159,7 +162,7 @@ async function removeType(typeName) {
 }
 
 async function deleteProperty() {
-  if (!sectionTypeProp.value) return;
+  if (props.readOnly || !sectionTypeProp.value) return;
   if (
     !confirm(
       "Delete the Section Types property?\n\nThis removes the property and ALL type assignments from every section.",

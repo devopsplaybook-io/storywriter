@@ -6,6 +6,7 @@ import {
 } from "../utils/DbUtils";
 import { collectSubtree, subtreeDepth } from "./SectionsTree";
 import { DbUtilsTransaction } from "../utils/DbTransaction";
+import { PropertiesDataGetAllSectionValuesForBook } from "../properties/PropertiesData";
 
 export const MAX_COPY_NODES = 1000;
 export const MAX_COPY_DEPTH = 100;
@@ -24,6 +25,23 @@ export class SectionsConflictError extends Error {
     super("Section was modified by someone else");
     this.name = "SectionsConflictError";
     this.section = section;
+  }
+}
+
+/**
+ * Thrown by SectionsDataUpdateAnalysis when the AI notes were changed by
+ * someone else while the notes were being generated. Carries both versions so
+ * the caller can offer them to the user.
+ */
+export class SectionsAnalysisConflictError extends Error {
+  public section: Section;
+  public generatedAnalysis: string;
+
+  constructor(section: Section, generatedAnalysis: string) {
+    super("AI notes changed while generating");
+    this.name = "SectionsAnalysisConflictError";
+    this.section = section;
+    this.generatedAnalysis = generatedAnalysis;
   }
 }
 
@@ -166,6 +184,31 @@ export async function SectionsDataUpdate(
   section.revision = (expectedRevision ?? section.revision) + 1;
 }
 
+/**
+ * Save AI notes only, without touching title/content/caption/type, and bump
+ * the revision. The update applies only while the stored analysis still equals
+ * `expectedAnalysis`, so notes edited manually during generation are never
+ * silently overwritten. Concurrent content edits are preserved because the
+ * statement never writes those columns.
+ */
+export async function SectionsDataUpdateAnalysis(
+  id: string,
+  analysis: string,
+  expectedAnalysis: string,
+): Promise<Section> {
+  return DbUtilsTransaction(async () => {
+    const affected = await DbUtilsExecSQL(
+      SQL_QUERIES.UPDATE_SECTION_ANALYSIS[DbUtilsGetType()],
+      [analysis, new Date().toISOString(), id, expectedAnalysis || ""],
+    );
+    const current = await SectionsDataGet(id);
+    if (affected === 0 || !current) {
+      throw new SectionsAnalysisConflictError(current, analysis);
+    }
+    return current;
+  });
+}
+
 export async function SectionsDataUpdateOrder(
   id: string,
   orderIndex: number,
@@ -303,7 +346,36 @@ export async function SectionsDataCopy(
     return copy;
   });
 
-  await SectionsDataAddMany(rows);
+  // Section-type labels travel with the copy; AI notes stay empty (they are
+  // regenerable content, not part of the duplicated manuscript).
+  const copiedIds = new Set(subtree.map((section) => section.id));
+  const propertyValues =
+    await PropertiesDataGetAllSectionValuesForBook(source.bookId);
+  const copiedValues = propertyValues
+    .filter((value) => copiedIds.has(value.sectionId))
+    .map((value) => ({
+      sectionId: copies.get(value.sectionId).id,
+      propertyId: value.propertyId,
+      value: value.value,
+    }));
+
+  // Sections and their labels are inserted atomically: a failed copy leaves
+  // no partial tree and no orphaned assignments.
+  await DbUtilsTransaction(async () => {
+    await SectionsDataAddMany(rows);
+    if (copiedValues.length > 0) {
+      const placeholders = copiedValues.map(() => "(?, ?, ?)").join(", ");
+      const params = copiedValues.flatMap((value) => [
+        value.sectionId,
+        value.propertyId,
+        value.value,
+      ]);
+      await DbUtilsExecSQL(
+        `INSERT INTO section_properties (sectionId, propertyId, value) VALUES ${placeholders}`,
+        params,
+      );
+    }
+  });
   return copies.get(sourceId);
 }
 
@@ -373,6 +445,12 @@ const SQL_QUERIES = {
       'UPDATE sections SET "type" = $1, "title" = $2, "content" = $3, "analysis" = $4, "mediaId" = $5, "caption" = $6, "revision" = "revision" + 1, "dateUpdated" = $7 WHERE "id" = $8 AND "revision" = $9',
     sqlite:
       "UPDATE sections SET type = ?, title = ?, content = ?, analysis = ?, mediaId = ?, caption = ?, revision = revision + 1, dateUpdated = ? WHERE id = ? AND revision = ?",
+  },
+  UPDATE_SECTION_ANALYSIS: {
+    postgres:
+      'UPDATE sections SET "analysis" = $1, "revision" = "revision" + 1, "dateUpdated" = $2 WHERE "id" = $3 AND COALESCE("analysis", \'\') = $4',
+    sqlite:
+      "UPDATE sections SET analysis = ?, revision = revision + 1, dateUpdated = ? WHERE id = ? AND COALESCE(analysis, '') = ?",
   },
   UPDATE_SECTION_ORDER: {
     postgres: 'UPDATE sections SET "orderIndex" = $1 WHERE "id" = $2',

@@ -4,7 +4,7 @@ jest.mock("../books/BooksData", () => ({
 
 jest.mock("../sections/SectionsData", () => ({
   SectionsDataListByBook: jest.fn(),
-  SectionsDataUpdate: jest.fn(),
+  SectionsDataUpdateAnalysis: jest.fn(),
 }));
 
 jest.mock("../attributes/BookAttributesData", () => ({
@@ -36,7 +36,7 @@ import {
 } from "./SectionAnalysis";
 import { callLLMWithRetry, LlmIsAvailable } from "./LlmClient";
 import { BooksDataGet } from "../books/BooksData";
-import { SectionsDataUpdate } from "../sections/SectionsData";
+import { SectionsDataUpdateAnalysis } from "../sections/SectionsData";
 import { BookAttributesDataListByBook } from "../attributes/BookAttributesData";
 import {
   PropertiesDataGetSectionValues,
@@ -46,7 +46,7 @@ import {
 const callLLMWithRetryMock = callLLMWithRetry as jest.Mock;
 const llmIsAvailableMock = LlmIsAvailable as jest.Mock;
 const booksDataGetMock = BooksDataGet as jest.Mock;
-const sectionsDataUpdateMock = SectionsDataUpdate as jest.Mock;
+const sectionsDataUpdateAnalysisMock = SectionsDataUpdateAnalysis as jest.Mock;
 const bookAttributesDataListByBookMock =
   BookAttributesDataListByBook as jest.Mock;
 const propertiesDataGetSectionValuesMock =
@@ -169,20 +169,39 @@ describe("SectionAnalysis — prompt building", () => {
 });
 
 describe("SectionAnalysis — generate", () => {
-  it("saves generated notes on the section and persists the update", async () => {
+  it("saves generated notes through the targeted conflict-aware update", async () => {
     callLLMWithRetryMock.mockResolvedValue(
       "### Recap\nAria opens the map.\n\n### Suggestions\n- Add sensory detail.",
+    );
+    sectionsDataUpdateAnalysisMock.mockImplementation(
+      async (id: string, analysis: string) =>
+        makeSection({ id, analysis, revision: 2 }),
     );
 
     const section = makeSection();
     const updated = await SectionAnalysisGenerate(section);
 
     expect(callLLMWithRetryMock).toHaveBeenCalledTimes(1);
+    // Only the analysis column is written, guarded by the notes loaded before
+    // the LLM call, so concurrent content edits survive and manual notes edits
+    // become a conflict.
+    expect(sectionsDataUpdateAnalysisMock).toHaveBeenCalledWith(
+      "sec-1",
+      "### Recap\nAria opens the map.\n\n### Suggestions\n- Add sensory detail.",
+      "",
+    );
     expect(updated.analysis).toContain("Aria opens the map.");
-    expect(sectionsDataUpdateMock).toHaveBeenCalledTimes(1);
-    // The AI-notes save is conflict-aware: it passes the section revision it
-    // loaded so a concurrent edit turns into a 409.
-    expect(sectionsDataUpdateMock).toHaveBeenCalledWith(updated, 1);
+    expect(updated.revision).toBe(2);
+  });
+
+  it("propagates a concurrent notes conflict instead of overwriting", async () => {
+    callLLMWithRetryMock.mockResolvedValue("Generated notes");
+    const conflict = new Error("AI notes changed while generating");
+    sectionsDataUpdateAnalysisMock.mockRejectedValue(conflict);
+
+    await expect(SectionAnalysisGenerate(makeSection())).rejects.toThrow(
+      "AI notes changed while generating",
+    );
   });
 
   it("throws on an empty LLM response and writes nothing", async () => {
@@ -192,7 +211,7 @@ describe("SectionAnalysis — generate", () => {
     await expect(SectionAnalysisGenerate(section)).rejects.toThrow(
       "LLM returned an empty response",
     );
-    expect(sectionsDataUpdateMock).not.toHaveBeenCalled();
+    expect(sectionsDataUpdateAnalysisMock).not.toHaveBeenCalled();
   });
 
   it("fails fast when the LLM is not configured", async () => {
@@ -203,7 +222,7 @@ describe("SectionAnalysis — generate", () => {
       LlmUnavailableError,
     );
     expect(callLLMWithRetryMock).not.toHaveBeenCalled();
-    expect(sectionsDataUpdateMock).not.toHaveBeenCalled();
+    expect(sectionsDataUpdateAnalysisMock).not.toHaveBeenCalled();
   });
 });
 
@@ -221,7 +240,7 @@ describe("SectionAnalysis — AI actions", () => {
       expect.stringContaining("Continue the following text"),
       expect.objectContaining({ temperature: 0.7 }),
     );
-    expect(sectionsDataUpdateMock).not.toHaveBeenCalled();
+    expect(sectionsDataUpdateAnalysisMock).not.toHaveBeenCalled();
   });
 
   it("passes the selection for improve", async () => {
