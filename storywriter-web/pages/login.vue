@@ -30,8 +30,10 @@
             type="password"
             placeholder="Your password"
             required
+            :minlength="needsSetup ? PASSWORD_MIN_LENGTH : undefined"
             autocomplete="current-password"
           />
+          <small v-if="needsSetup">{{ PasswordMinimumHint() }}</small>
         </label>
 
         <label v-if="needsSetup">
@@ -57,6 +59,11 @@
 
 <script setup>
 import api from "../utils/api";
+import {
+  PASSWORD_MIN_LENGTH,
+  PasswordMinimumHint,
+  PasswordTooShort,
+} from "../utils/passwordPolicy";
 const authStore = useAuthStore();
 const router = useRouter();
 
@@ -90,6 +97,11 @@ async function handleSubmit() {
     if (needsSetup.value) {
       if (password.value !== passwordConfirm.value) {
         error.value = "Passwords do not match";
+        loading.value = false;
+        return;
+      }
+      if (PasswordTooShort(password.value)) {
+        error.value = PasswordMinimumHint();
         loading.value = false;
         return;
       }

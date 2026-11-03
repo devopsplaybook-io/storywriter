@@ -64,6 +64,13 @@ export interface CompiledBook {
 }
 
 const CONTENT_IMAGE_RE = /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+const MARKDOWN_IMAGE_RE = /!\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/g;
+const RAW_IMAGE_TAG_RE = /<img\b[^>]*>/gi;
+const HTML_FETCHING_IMAGE_TAG_RE = /<(img|source|image)\b[^>]*>/gi;
+const HTML_SCRIPT_STYLE_RE = /<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+const HTML_UNSAFE_ELEMENT_RE = /<\/?(iframe|object|embed|link)\b[^>]*>/gi;
+
+export type ManuscriptRenderMode = "docx" | "epub";
 
 // Pure compile+render module kept free of DB imports so it stays unit-testable
 
@@ -77,6 +84,103 @@ export function resolveMediaSlug(
     mediaItems.find((m) => m.slug === href) ||
     null
   );
+}
+
+/**
+ * True for any image reference the converter could try to fetch over the
+ * network: an absolute URI scheme other than `data:image/`, or a
+ * protocol-relative (`//`) URL.
+ */
+export function isRemoteImageRef(href: string): boolean {
+  const value = String(href || "").trim();
+  if (/^data:image\//i.test(value)) {
+    return false;
+  }
+  return /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith("//");
+}
+
+function imagePlaceholder(alt: string, href: string): string {
+  return `[missing image: ${cleanAlt(alt) || cleanAlt(href) || "image"}]`;
+}
+
+function attrValue(tag: string, name: string): string | null {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = tag.match(
+    new RegExp(`\\b${escaped}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'>]+))`, "i"),
+  );
+  return match ? match[1] ?? match[2] ?? match[3] ?? "" : null;
+}
+
+function stripImageFetchAttributes(tag: string): string {
+  return tag
+    .replace(/\s+srcset\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+)/gi, "")
+    .replace(/\s+sizes\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+)/gi, "");
+}
+
+function isAllowedHtmlImageSrc(src: string, mode: ManuscriptRenderMode): boolean {
+  if (/^data:image\//i.test(src)) {
+    return true;
+  }
+  return mode === "epub" && /^media\/img-\d+\.[a-z0-9]+$/i.test(src);
+}
+
+/**
+ * Replace every remote image reference (markdown image syntax or raw HTML
+ * `<img>`) with a plain-text placeholder, so no later rendering step can issue
+ * an outbound request. Locally generated `data:image/...` URIs pass through.
+ */
+export function SanitizeManuscriptMarkdown(markdown: string): string {
+  if (!markdown) {
+    return markdown;
+  }
+  let result = markdown.replace(
+    MARKDOWN_IMAGE_RE,
+    (match, alt: string, href: string) =>
+      isRemoteImageRef(href) ? imagePlaceholder(alt, href) : match,
+  );
+  result = result.replace(RAW_IMAGE_TAG_RE, (tag) => {
+    const src = attrValue(tag, "src") ?? attrValue(tag, "xlink:href");
+    if (src === null) {
+      return stripImageFetchAttributes(tag);
+    }
+    if (isRemoteImageRef(src)) {
+      return imagePlaceholder(attrValue(tag, "alt") ?? "", src);
+    }
+    return stripImageFetchAttributes(tag);
+  });
+  return result;
+}
+
+/**
+ * Post-`marked` allow-list: only locally generated image sources survive, and
+ * elements that could fetch an alternate resource (scripts, styles, embedded
+ * frames, remote links) are dropped. This is the last line of defence before
+ * HTML is handed to HTMLtoDOCX or written into the EPUB.
+ */
+export function SanitizeManuscriptHtml(
+  html: string,
+  mode: ManuscriptRenderMode,
+): string {
+  if (!html) {
+    return html;
+  }
+  let result = html.replace(HTML_SCRIPT_STYLE_RE, "");
+  result = result.replace(HTML_UNSAFE_ELEMENT_RE, "");
+  result = result.replace(
+    HTML_FETCHING_IMAGE_TAG_RE,
+    (tag, tagName: string) => {
+      const src =
+        attrValue(tag, "src") ??
+        attrValue(tag, "xlink:href") ??
+        attrValue(tag, "href");
+      if (src !== null && isAllowedHtmlImageSrc(src, mode)) {
+        return stripImageFetchAttributes(tag);
+      }
+      const alt = attrValue(tag, "alt") ?? "";
+      return escapeXml(imagePlaceholder(alt, src ?? tagName));
+    },
+  );
+  return result;
 }
 
 export async function BookManuscriptCompile(
@@ -121,10 +225,13 @@ export async function BookManuscriptCompile(
     if (!content) {
       return { markdown: "", images: [] };
     }
-    const matches = [...content.matchAll(CONTENT_IMAGE_RE)];
+    // Remote references are replaced before any image resolution so they can
+    // never reach a renderer that downloads images (HTMLtoDOCX).
+    const sanitized = SanitizeManuscriptMarkdown(content);
+    const matches = [...sanitized.matchAll(CONTENT_IMAGE_RE)];
     for (const match of matches) {
       const href = match[2];
-      if (/^(https?:\/\/|data:)/i.test(href)) {
+      if (isRemoteImageRef(href)) {
         continue;
       }
       const ref = resolveMediaSlug(mediaItems, href);
@@ -140,10 +247,10 @@ export async function BookManuscriptCompile(
       });
     }
     const used = new Map<string, CompiledContentImage>();
-    const markdown = content.replace(
+    const markdown = sanitized.replace(
       CONTENT_IMAGE_RE,
       (match, _alt: string, href: string) => {
-        if (/^(https?:\/\/|data:)/i.test(href)) {
+        if (isRemoteImageRef(href)) {
           return match;
         }
         const ref = resolveMediaSlug(mediaItems, href);
@@ -207,7 +314,11 @@ export async function BookManuscriptCompile(
           level: Math.min(depth + 1, 6),
           text: "AI Notes",
         });
-        blocks.push({ kind: "markdown", markdown: section.analysis, images: [] });
+        blocks.push({
+          kind: "markdown",
+          markdown: SanitizeManuscriptMarkdown(section.analysis),
+          images: [],
+        });
       }
     }
     for (const child of siblings(section.id)) {
@@ -274,10 +385,12 @@ export function RenderManuscriptMarkdown(
       lines.push(`${"#".repeat(block.level)} ${block.text}`, "");
     } else if (block.kind === "markdown") {
       lines.push(
-        substituteImages(block, (image) =>
-          image.media
-            ? `![${cleanAlt(image.alt)}](${toDataUri(image.media)})`
-            : image.missingLabel,
+        SanitizeManuscriptMarkdown(
+          substituteImages(block, (image) =>
+            image.media
+              ? `![${cleanAlt(image.alt)}](${toDataUri(image.media)})`
+              : image.missingLabel,
+          ),
         ),
         "",
       );
@@ -288,7 +401,7 @@ export function RenderManuscriptMarkdown(
         lines.push(block.missingLabel, "");
       }
       if (block.caption) {
-        lines.push(block.caption, "");
+        lines.push(SanitizeManuscriptMarkdown(block.caption), "");
       }
     }
   }
@@ -309,16 +422,23 @@ function toXhtml(html: string): string {
   return html.replace(/<(br|hr|img)\b([^>]*?)\s*\/?>/gi, "<$1$2 />");
 }
 
-function markdownToHtml(markdown: string): string {
+function markdownToHtml(
+  markdown: string,
+  mode: ManuscriptRenderMode,
+): string {
   if (!markdown || !markdown.trim()) {
     return "";
   }
-  const html = marked.parse(markdown, { breaks: true, async: false }) as string;
-  return toXhtml(html).trim();
+  const html = marked.parse(SanitizeManuscriptMarkdown(markdown), {
+    breaks: true,
+    async: false,
+  }) as string;
+  return SanitizeManuscriptHtml(toXhtml(html), mode).trim();
 }
 
 function blockToHtml(
   block: CompiledBlock,
+  mode: ManuscriptRenderMode,
   renderImage: (image: CompiledContentImage) => string,
   renderSectionImage: (block: Extract<CompiledBlock, { kind: "image" }>) => string,
 ): string {
@@ -326,12 +446,12 @@ function blockToHtml(
     return `<h${block.level}>${escapeXml(block.text)}</h${block.level}>`;
   }
   if (block.kind === "markdown") {
-    return markdownToHtml(substituteImages(block, renderImage));
+    return markdownToHtml(substituteImages(block, renderImage), mode);
   }
   const image = renderSectionImage(block);
   let html = `<p>${image}</p>`;
   if (block.caption) {
-    html += `\n<div class="media-caption">${markdownToHtml(block.caption)}</div>`;
+    html += `\n<div class="media-caption">${markdownToHtml(block.caption, mode)}</div>`;
   }
   return html;
 }
@@ -340,21 +460,25 @@ export async function RenderManuscriptDocx(
   compiled: CompiledBook,
   book: Book,
 ): Promise<Buffer> {
-  const body = flatten(compiled)
-    .map((block) =>
-      blockToHtml(
-        block,
-        (image) =>
-          image.media
-            ? `<img src="${toDataUri(image.media)}" alt="${escapeXml(cleanAlt(image.alt))}" />`
-            : escapeXml(image.missingLabel),
-        (imageBlock) =>
-          imageBlock.media
-            ? `<img src="${toDataUri(imageBlock.media)}" alt="${escapeXml(cleanAlt(imageBlock.alt))}" />`
-            : escapeXml(imageBlock.missingLabel),
-      ),
-    )
-    .join("\n");
+  const body = SanitizeManuscriptHtml(
+    flatten(compiled)
+      .map((block) =>
+        blockToHtml(
+          block,
+          "docx",
+          (image) =>
+            image.media
+              ? `<img src="${toDataUri(image.media)}" alt="${escapeXml(cleanAlt(image.alt))}" />`
+              : escapeXml(image.missingLabel),
+          (imageBlock) =>
+            imageBlock.media
+              ? `<img src="${toDataUri(imageBlock.media)}" alt="${escapeXml(cleanAlt(imageBlock.alt))}" />`
+              : escapeXml(imageBlock.missingLabel),
+        ),
+      )
+      .join("\n"),
+    "docx",
+  );
   const html = `<html><head></head><body>${body}</body></html>`;
   const result = await HTMLtoDOCX(html, null, {
     title: book.name,
@@ -421,21 +545,25 @@ export async function RenderManuscriptEpub(
 
   const chapterHtml = compiled.chapters.map((chapterBlocks, index) => {
     const title = chapterTitles[index];
-    const body = chapterBlocks
-      .map((block) =>
-        blockToHtml(
-          block,
-          (image) =>
-            image.media
-              ? `<img src="${pathByToken.get(image.token)}" alt="${escapeXml(cleanAlt(image.alt))}" />`
-              : escapeXml(image.missingLabel),
-          (imageBlock) =>
-            imageBlock.media
-              ? `<img src="${pathByImageBlock.get(imageBlock)}" alt="${escapeXml(cleanAlt(imageBlock.alt))}" />`
-              : escapeXml(imageBlock.missingLabel),
-        ),
-      )
-      .join("\n");
+    const body = SanitizeManuscriptHtml(
+      chapterBlocks
+        .map((block) =>
+          blockToHtml(
+            block,
+            "epub",
+            (image) =>
+              image.media
+                ? `<img src="${pathByToken.get(image.token)}" alt="${escapeXml(cleanAlt(image.alt))}" />`
+                : escapeXml(image.missingLabel),
+            (imageBlock) =>
+              imageBlock.media
+                ? `<img src="${pathByImageBlock.get(imageBlock)}" alt="${escapeXml(cleanAlt(imageBlock.alt))}" />`
+                : escapeXml(imageBlock.missingLabel),
+          ),
+        )
+        .join("\n"),
+      "epub",
+    );
     return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="und" xml:lang="und">

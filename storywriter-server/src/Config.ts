@@ -34,6 +34,12 @@ export class Config extends ConfigBase {
   public LLM_DAILY_QUOTA = 100;
   public IMPORT_EXPORT_CONCURRENCY = 2;
 
+  // Authentication
+  // Trust X-Forwarded-For only when the deployment runs behind a trusted
+  // reverse proxy (the bundled config sets it for the proxied deployment).
+  public TRUST_PROXY = false;
+  public PASSWORD_MIN_LENGTH = 8;
+
   // Manuscript export budgets: the whole content, and every referenced media
   // file combined, must fit these budgets or the export fails with 413
   public EXPORT_MAX_CONTENT_BYTES = 20 * 1024 * 1024;
@@ -65,6 +71,8 @@ export class Config extends ConfigBase {
     this.addConfigField({ field: "LLM_OVERALL_TIMEOUT_MS" });
     this.addConfigField({ field: "RATE_LIMIT_LOGIN_MAX" });
     this.addConfigField({ field: "RATE_LIMIT_LOGIN_WINDOW_MS" });
+    this.addConfigField({ field: "TRUST_PROXY" });
+    this.addConfigField({ field: "PASSWORD_MIN_LENGTH" });
     this.addConfigField({ field: "LLM_USER_CONCURRENCY" });
     this.addConfigField({ field: "LLM_DAILY_QUOTA" });
     this.addConfigField({ field: "IMPORT_EXPORT_CONCURRENCY" });

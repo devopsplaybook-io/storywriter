@@ -31,13 +31,7 @@ export function RateLimitCheck(
   windowMs: number,
 ): RateLimitResult {
   const now = Date.now();
-  if (windows.size > SWEEP_THRESHOLD) {
-    for (const [entryKey, entry] of windows) {
-      if (now - entry.windowStart >= windowMs) {
-        windows.delete(entryKey);
-      }
-    }
-  }
+  SweepExpiredWindows(now, windowMs);
   const entry = windows.get(key);
   if (!entry || now - entry.windowStart >= windowMs) {
     windows.set(key, { windowStart: now, count: 1 });
@@ -47,11 +41,64 @@ export function RateLimitCheck(
     entry.count++;
     return { allowed: true, retryAfterSeconds: 0 };
   }
-  const retryAfterSeconds = Math.max(
+  return { allowed: false, retryAfterSeconds: RetryAfter(entry, now, windowMs) };
+}
+
+/**
+ * Read-only variant of {@link RateLimitCheck}: reports whether the key has
+ * already reached `max` in the current window without consuming or creating an
+ * entry. Used when only certain outcomes (e.g. failed logins) count.
+ */
+export function RateLimitPeek(
+  key: string,
+  max: number,
+  windowMs: number,
+): RateLimitResult {
+  const now = Date.now();
+  const entry = windows.get(key);
+  if (!entry || now - entry.windowStart >= windowMs || entry.count < max) {
+    return { allowed: true, retryAfterSeconds: 0 };
+  }
+  return { allowed: false, retryAfterSeconds: RetryAfter(entry, now, windowMs) };
+}
+
+/**
+ * Record one failure for the key: starts a window on the first failure and
+ * increments the count within the current window. Windows reset after
+ * `windowMs`, so the budget is a fixed window of failures rather than a
+ * penalty that lasts forever.
+ */
+export function RateLimitRecordFailure(key: string, windowMs: number): void {
+  const now = Date.now();
+  SweepExpiredWindows(now, windowMs);
+  const entry = windows.get(key);
+  if (!entry || now - entry.windowStart >= windowMs) {
+    windows.set(key, { windowStart: now, count: 1 });
+    return;
+  }
+  entry.count++;
+}
+
+function RetryAfter(
+  entry: RateLimitWindow,
+  now: number,
+  windowMs: number,
+): number {
+  return Math.max(
     1,
     Math.ceil((entry.windowStart + windowMs - now) / 1000),
   );
-  return { allowed: false, retryAfterSeconds };
+}
+
+function SweepExpiredWindows(now: number, windowMs: number): void {
+  if (windows.size <= SWEEP_THRESHOLD) {
+    return;
+  }
+  for (const [entryKey, entry] of windows) {
+    if (now - entry.windowStart >= windowMs) {
+      windows.delete(entryKey);
+    }
+  }
 }
 
 /**

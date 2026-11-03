@@ -1,9 +1,11 @@
 import { Book } from "../model/Book";
 import { Section } from "../model/Section";
 import * as fs from "fs-extra";
+import * as http from "http";
 import * as os from "os";
 import * as path from "path";
 import * as zlib from "zlib";
+import { AddressInfo } from "net";
 import {
   BookManuscriptCompile,
   CompiledBlock,
@@ -13,6 +15,9 @@ import {
   RenderManuscriptDocx,
   RenderManuscriptEpub,
   RenderManuscriptMarkdown,
+  SanitizeManuscriptHtml,
+  SanitizeManuscriptMarkdown,
+  isRemoteImageRef,
   resolveMediaSlug,
 } from "./BookManuscript";
 
@@ -420,5 +425,166 @@ describe("RenderManuscriptEpub", () => {
     const ch2 = readZipEntry(buffer, "OEBPS/ch2.xhtml").toString("utf8");
     expect(ch2).toContain("Chapter 2");
     expect(ch2).toContain("Deep content");
+  });
+});
+
+describe("remote image hardening (SSRF)", () => {
+  let listener: http.Server;
+  let port = 0;
+  let hits = 0;
+
+  beforeAll(async () => {
+    listener = http.createServer((_req, res) => {
+      hits++;
+      res.setHeader("Content-Type", "image/png");
+      res.end(Buffer.from("remote-secret-bytes"));
+    });
+    await new Promise<void>((resolve) =>
+      listener.listen(0, "127.0.0.1", () => resolve()),
+    );
+    port = (listener.address() as AddressInfo).port;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+  });
+
+  function remoteSections(): Section[] {
+    return [
+      makeSection({ id: "root", parentId: null, type: "container", title: "Root" }),
+      makeSection({
+        id: "cover",
+        parentId: "root",
+        type: "media",
+        title: "Cover",
+        mediaId: "media-1",
+        caption: `Caption ![cap](http://127.0.0.1:${port}/cap.png)`,
+        orderIndex: 0,
+      }),
+      makeSection({
+        id: "ch1",
+        parentId: "root",
+        type: "text",
+        title: "Chapter 1",
+        content:
+          `Intro ![remote](http://127.0.0.1:${port}/pixel.png) ` +
+          `and ![cover](cover.png)\n\n` +
+          `<img src="http://127.0.0.1:${port}/raw.png" alt="raw">`,
+        analysis: `Note ![note](http://127.0.0.1:${port}/note.png)`,
+        orderIndex: 1,
+      }),
+    ];
+  }
+
+  it("classifies remote image references", () => {
+    expect(isRemoteImageRef("http://127.0.0.1/x.png")).toBe(true);
+    expect(isRemoteImageRef("https://example.com/x.png")).toBe(true);
+    expect(isRemoteImageRef("//example.com/x.png")).toBe(true);
+    expect(isRemoteImageRef("data:text/html,<b>x</b>")).toBe(true);
+    expect(isRemoteImageRef("data:image/png;base64,AAAA")).toBe(false);
+    expect(isRemoteImageRef("cover.png")).toBe(false);
+    expect(isRemoteImageRef("unknown-slug")).toBe(false);
+  });
+
+  it("sanitizes markdown images and raw HTML images", () => {
+    const markdown =
+      "![remote](http://example.com/x.png) ![local](cover.png)\n" +
+      '<img src="http://example.com/raw.png" alt="raw" srcset="http://example.com/2x.png">';
+    const sanitized = SanitizeManuscriptMarkdown(markdown);
+    expect(sanitized).toContain("[missing image: remote]");
+    expect(sanitized).toContain("[missing image: raw]");
+    expect(sanitized).toContain("![local](cover.png)");
+    expect(sanitized).not.toContain("example.com");
+    // Idempotent
+    expect(SanitizeManuscriptMarkdown(sanitized)).toBe(sanitized);
+  });
+
+  it("keeps only local data images in generated HTML", () => {
+    const html =
+      '<script src="http://example.com/x.js"></script>' +
+      '<iframe src="http://example.com/frame"></iframe>' +
+      '<img src="data:image/png;base64,AAAA" srcset="http://example.com/2x.png">' +
+      '<img src="http://example.com/x.png" alt="remote">' +
+      '<img src="media/img-1.png" alt="epub-media">';
+    const docx = SanitizeManuscriptHtml(html, "docx");
+    expect(docx).toContain("data:image/png;base64,AAAA");
+    expect(docx).not.toContain("srcset");
+    expect(docx).not.toContain("http://example.com");
+    expect(docx).not.toContain("<script");
+    expect(docx).not.toContain("<iframe");
+    expect(docx).toContain("[missing image: remote]");
+    expect(docx).toContain("[missing image: epub-media]");
+
+    const epub = SanitizeManuscriptHtml(html, "epub");
+    expect(epub).toContain('src="media/img-1.png"');
+    expect(epub).not.toContain("http://example.com");
+  });
+
+  it("replaces remote images at compile time but keeps unknown local slugs", async () => {
+    const sections = [
+      makeSection({ id: "root", parentId: null, type: "container", title: "Root" }),
+      makeSection({
+        id: "ch1",
+        parentId: "root",
+        type: "text",
+        title: "Chapter 1",
+        content: `![r](http://127.0.0.1:${port}/x.png) ![c](unknown-slug)`,
+        orderIndex: 0,
+      }),
+    ];
+    const compiled = await BookManuscriptCompile(
+      makeBook(),
+      sections,
+      MEDIA_ITEMS,
+      makeLoader(),
+    );
+    const mdBlocks = flatten(compiled.chapters).filter(
+      (b) => b.kind === "markdown",
+    ) as Extract<CompiledBlock, { kind: "markdown" }>[];
+    expect(mdBlocks[0].markdown).toContain("[missing image: r]");
+    expect(mdBlocks[0].markdown).toContain("![c](unknown-slug)");
+    expect(mdBlocks[0].markdown).not.toContain("127.0.0.1");
+  });
+
+  it("performs zero outbound requests for Markdown, DOCX and EPUB", async () => {
+    hits = 0;
+    const compiled = await BookManuscriptCompile(
+      makeBook(),
+      remoteSections(),
+      MEDIA_ITEMS,
+      makeLoader(),
+      { include: "full" },
+    );
+
+    const markdown = RenderManuscriptMarkdown(compiled, makeBook());
+    expect(markdown).toContain("[missing image: remote]");
+    expect(markdown).toContain("[missing image: raw]");
+    expect(markdown).toContain("[missing image: note]");
+    expect(markdown).toContain("[missing image: cap]");
+    expect(markdown).not.toContain("127.0.0.1");
+
+    const docx = await RenderManuscriptDocx(compiled, makeBook());
+    const documentXml = readZipEntry(docx, "word/document.xml").toString("utf8");
+    expect(documentXml).toContain("missing image");
+    expect(documentXml).not.toContain("127.0.0.1");
+    expect(documentXml).not.toContain("remote-secret-bytes");
+
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "storywriter-ssrf-"));
+    try {
+      const epubFile = await RenderManuscriptEpub(compiled, makeBook(), tmpDir);
+      const epub = await fs.readFile(epubFile);
+      for (const entry of ["OEBPS/ch1.xhtml", "OEBPS/ch2.xhtml"]) {
+        const chapter = readZipEntry(epub, entry).toString("utf8");
+        expect(chapter).toContain("missing image");
+        expect(chapter).not.toContain("127.0.0.1");
+        expect(chapter).not.toContain("remote-secret-bytes");
+      }
+    } finally {
+      await fs.remove(tmpDir);
+    }
+
+    // Give any stray asynchronous fetch a chance to reach the listener
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(hits).toBe(0);
   });
 });

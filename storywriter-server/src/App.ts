@@ -1,6 +1,5 @@
 import { StandardMeter, StandardTracer } from "@devopsplaybook.io/otel-utils";
 import { StandardTracerFastifyRegisterHooks } from "@devopsplaybook.io/otel-utils-fastify";
-import fastifyCors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 import { watchFile } from "fs-extra";
@@ -33,6 +32,8 @@ import { MediaRoutes } from "./media/MediaRoutes";
 import { LegacyMetadataMigrate } from "./utils/LegacyMetadata";
 import { RegisterSecurityHeaders } from "./SecurityHeaders";
 import { StaticCacheControl } from "./StaticFiles";
+import { RegisterErrorHandler } from "./ErrorHandler";
+import { RegisterCors } from "./Cors";
 
 import fastifyCompress from "@fastify/compress";
 import fastifyMultipart from "@fastify/multipart";
@@ -86,7 +87,12 @@ Promise.resolve().then(async () => {
     logger: {
       level: "error",
     },
+    // Only trust X-Forwarded-For when the deployment declares it runs behind
+    // a trusted reverse proxy (see docs/specs/USERS.md).
+    trustProxy: config.TRUST_PROXY,
   });
+
+  RegisterErrorHandler(fastify);
 
   RegisterSecurityHeaders(fastify, path.join(__dirname, "../web"));
 
@@ -102,12 +108,7 @@ Promise.resolve().then(async () => {
     },
   });
 
-  if (config.CORS_POLICY_ORIGIN) {
-    await fastify.register(fastifyCors, {
-      origin: config.CORS_POLICY_ORIGIN,
-      methods: "GET,PUT,POST,DELETE",
-    });
-  }
+  await RegisterCors(fastify, config);
 
   StandardTracerFastifyRegisterHooks(fastify, OTelTracer(), OTelLogger(), {
     ignoreList: ["GET-/api/status"],

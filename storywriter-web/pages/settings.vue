@@ -113,8 +113,10 @@
               v-model="passwordNew"
               type="password"
               required
+              :minlength="PASSWORD_MIN_LENGTH"
               autocomplete="new-password"
             />
+            <small>{{ PasswordMinimumHint() }}</small>
           </label>
           <label>
             Confirm New Password
@@ -231,6 +233,11 @@
 </template>
 
 <script setup>
+import {
+  PASSWORD_MIN_LENGTH,
+  PasswordMinimumHint,
+  PasswordTooShort,
+} from "../utils/passwordPolicy";
 const authStore = useAuthStore();
 const router = useRouter();
 const toggleTheme = inject("toggleTheme");
@@ -275,6 +282,10 @@ async function changePassword() {
   passwordSuccess.value = false;
   if (passwordNew.value !== passwordConfirm.value) {
     passwordError.value = "Passwords do not match";
+    return;
+  }
+  if (PasswordTooShort(passwordNew.value)) {
+    passwordError.value = PasswordMinimumHint();
     return;
   }
   changingPassword.value = true;
