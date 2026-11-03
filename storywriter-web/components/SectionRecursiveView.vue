@@ -42,6 +42,9 @@
               <p v-if="item.caption" class="media-caption">
                 {{ item.caption }}
               </p>
+              <p v-else-if="!getMediaUrl(item)" class="media-caption">
+                <em>No media selected</em>
+              </p>
             </div>
             <div
               v-else-if="item.type === 'container'"
@@ -116,7 +119,7 @@
               <p v-if="item.caption" class="media-caption">
                 {{ item.caption }}
               </p>
-              <p v-else class="media-caption">
+              <p v-else-if="!getMediaUrl(item)" class="media-caption">
                 <em>No media selected</em>
               </p>
             </div>

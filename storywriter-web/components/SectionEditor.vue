@@ -714,6 +714,15 @@ watch(
   { immediate: true },
 );
 
+// The server nulls mediaId when the referenced media is deleted; keep the local
+// selector in sync so the editor shows the "-- No media selected --" state.
+watch(
+  () => props.section?.mediaId,
+  (mediaId) => {
+    selectedMediaId.value = mediaId || null;
+  },
+);
+
 function diffFromServer() {
   if (!props.section) return {};
   const data = {};
