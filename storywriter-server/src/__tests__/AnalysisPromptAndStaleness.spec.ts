@@ -4,6 +4,8 @@ jest.mock("fs-extra", () => ({
   readJson: jest.fn(),
   writeJson: jest.fn(),
   ensureDir: jest.fn(),
+  rename: jest.fn(async () => undefined),
+  remove: jest.fn(async () => undefined),
 }));
 
 const fsMock = jest.requireMock("fs-extra") as {
@@ -11,6 +13,8 @@ const fsMock = jest.requireMock("fs-extra") as {
   readJson: jest.Mock;
   writeJson: jest.Mock;
   ensureDir: jest.Mock;
+  rename: jest.Mock;
+  remove: jest.Mock;
 };
 
 jest.mock("../books/BooksData", () => ({
@@ -321,5 +325,12 @@ describe("BookAnalysis — generate caches the content hash", () => {
     expect(result.contentHash).toMatch(/^[0-9a-f]{64}$/);
     const cached = fsMock.writeJson.mock.calls[0][1];
     expect(cached.contentHash).toBe(result.contentHash);
+    // Written atomically: temp file first, then renamed over the cache file.
+    const tmpPath = fsMock.writeJson.mock.calls[0][0] as string;
+    expect(tmpPath).toMatch(/\.tmp$/);
+    expect(fsMock.rename).toHaveBeenCalledWith(
+      tmpPath,
+      expect.stringMatching(/book-analysis-book-1\.json$/),
+    );
   });
 });

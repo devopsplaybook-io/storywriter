@@ -73,8 +73,11 @@ Media items (pictures) can be attached to books and referenced by sections. Medi
 - [x] Sections can reference a media item via `mediaId` field
 - [x] A section's `mediaId` must belong to the same book as the section; cross-book references are rejected (`400`) on create and update
 - [x] Media routes validate `media.bookId === :bookId`, so another book's media is never listed, served or mutated
+- [x] Deleting a media item clears every `sections.mediaId` reference to it in the same transaction; sections keep their `media` type and the editor shows a "No media selected" state
+- [x] Manuscript exports render the `[missing image: …]` placeholder for a section whose media is missing
+- [x] Upload removes the written file when the metadata insert fails, so no orphaned file is left on disk
 - [x] Media sections display image preview in editor
 - [x] Optional caption with markdown support
 - [x] Media selector dropdown in section editor
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-24_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-11-03_

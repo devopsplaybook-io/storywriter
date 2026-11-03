@@ -58,6 +58,7 @@ import {
   ImportExportAcquire,
   ImportExportRelease,
 } from "../utils/RequestLimits";
+import { DbUtilsTransaction } from "../utils/DbTransaction";
 
 function SafeExportFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9-_]/g, "_");
@@ -150,20 +151,25 @@ export class BooksRoutes {
       book.description = req.body.description || "";
       book.writingGoal = Math.max(0, Math.floor(Number(req.body.writingGoal) || 0));
       book.ownerId = user.id;
-      await BooksDataAdd(book);
 
-      // Create root section for the book
-      await SectionsDataAddRootSection(book.id);
+      // One transaction: a failure must never leave a book without its root
+      // section, default property or owner access grant.
+      await DbUtilsTransaction(async () => {
+        await BooksDataAdd(book);
 
-      // Create default section types property
-      const defaultProperty = new Property();
-      defaultProperty.bookId = book.id;
-      defaultProperty.name = "Section Types";
-      defaultProperty.options = ["Chapter"];
-      await PropertiesDataAdd(defaultProperty);
+        // Create root section for the book
+        await SectionsDataAddRootSection(book.id);
 
-      // Give creator write access
-      await BooksDataSetAccess(book.id, user.id, "write");
+        // Create default section types property
+        const defaultProperty = new Property();
+        defaultProperty.bookId = book.id;
+        defaultProperty.name = "Section Types";
+        defaultProperty.options = ["Chapter"];
+        await PropertiesDataAdd(defaultProperty);
+
+        // Give creator write access
+        await BooksDataSetAccess(book.id, user.id, "write");
+      });
 
       const permission = await BookAccessGet(req, book, user);
       return res.status(201).send({ ...book.toTransportJson(), permission });

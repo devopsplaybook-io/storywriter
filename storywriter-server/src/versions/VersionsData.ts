@@ -14,6 +14,7 @@ import {
 import { DbUtilsTransaction } from "../utils/DbTransaction";
 import { SafeJoin, IsSafePathSegment } from "../utils/SafePath";
 import { LinkOrCopyFile, RemoveMediaDirsNotIn } from "../books/BookFiles";
+import { BooksDataGet } from "../books/BooksData";
 import { BookAnalysisDeleteCache } from "../analysis/BookAnalysis";
 import {
   SectionsDataListByBook,
@@ -41,6 +42,35 @@ export interface BookSnapshot {
     propertyId: string;
     value: string;
   }[];
+  book?: {
+    name?: string;
+    description?: string;
+    writingGoal?: number;
+  };
+}
+
+const VERSION_INSERT_MAX_ATTEMPTS = 5;
+const VERSION_INSERT_RETRY_DELAY_MS = 10;
+
+/**
+ * Whether an error is a unique-constraint violation, on either dialect.
+ * Version creation retries on these instead of silently reusing a number.
+ */
+export function IsUniqueViolation(err: unknown): boolean {
+  const error = err as { code?: string; message?: string };
+  if (error?.code === "23505") {
+    return true;
+  }
+  if (error?.code === "SQLITE_CONSTRAINT_UNIQUE") {
+    return true;
+  }
+  if (
+    error?.code === "SQLITE_CONSTRAINT" &&
+    /unique/i.test(error.message || "")
+  ) {
+    return true;
+  }
+  return /duplicate key|unique constraint failed/i.test(error?.message || "");
 }
 
 /**
@@ -115,19 +145,13 @@ export async function VersionsDataCreate(
   note: string,
   config: Config,
 ): Promise<BookVersion> {
-  // Get current max version number
-  const maxRow = await DbUtilsQuerySQL(
-    SQL_QUERIES.GET_MAX_VERSION[DbUtilsGetType()],
-    [bookId],
-  );
-  const maxVersion = maxRow[0]?.maxVersion || 0;
-
   const version = new BookVersion();
   version.bookId = bookId;
-  version.versionNumber = maxVersion + 1;
   version.note = note;
 
-  // Build snapshot from current data
+  // Build snapshot from current data. Snapshot building and media hard-linking
+  // stay outside the transaction: filesystem work must not run inside it.
+  const book = await BooksDataGet(bookId);
   const sections = await SectionsDataListByBook(bookId);
   const attributes = await BookAttributesDataListByBook(bookId);
   const mediaItems = await MediaDataList(bookId);
@@ -140,6 +164,13 @@ export async function VersionsDataCreate(
     mediaMeta: mediaItems.map((m) => ({ ...m })),
     properties: properties.map((p) => p.toJson()),
     sectionProperties,
+    book: book
+      ? {
+          name: book.name,
+          description: book.description,
+          writingGoal: book.writingGoal,
+        }
+      : undefined,
   };
   version.snapshot = JSON.stringify(snapshot);
 
@@ -170,14 +201,7 @@ export async function VersionsDataCreate(
     }
   }
 
-  await DbUtilsExecSQL(SQL_QUERIES.INSERT[DbUtilsGetType()], [
-    version.id,
-    version.bookId,
-    version.versionNumber,
-    version.note,
-    version.snapshot,
-    version.dateCreated,
-  ]);
+  await VersionsDataInsertWithRetry(version);
 
   // Retention: keep only the newest VERSIONS_MAX_PER_BOOK versions.
   try {
@@ -189,6 +213,48 @@ export async function VersionsDataCreate(
   }
 
   return version;
+}
+
+/**
+ * Allocate the next version number and insert the row in one transaction.
+ * A concurrent creator can win the allocation; the unique
+ * (bookId, versionNumber) index rejects the loser, which retries with a
+ * freshly allocated number instead of sharing it.
+ */
+async function VersionsDataInsertWithRetry(
+  version: BookVersion,
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < VERSION_INSERT_MAX_ATTEMPTS; attempt++) {
+    try {
+      await DbUtilsTransaction(async () => {
+        const maxRow = await DbUtilsQuerySQL(
+          SQL_QUERIES.GET_MAX_VERSION[DbUtilsGetType()],
+          [version.bookId],
+        );
+        const maxVersion = maxRow[0]?.maxVersion || 0;
+        version.versionNumber = maxVersion + 1;
+        await DbUtilsExecSQL(SQL_QUERIES.INSERT[DbUtilsGetType()], [
+          version.id,
+          version.bookId,
+          version.versionNumber,
+          version.note,
+          version.snapshot,
+          version.dateCreated,
+        ]);
+      });
+      return;
+    } catch (err) {
+      if (!IsUniqueViolation(err)) {
+        throw err;
+      }
+      lastError = err;
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, VERSION_INSERT_RETRY_DELAY_MS + attempt * 10),
+    );
+  }
+  throw lastError;
 }
 
 async function PruneOldVersions(
@@ -268,6 +334,20 @@ export async function VersionsDataRestore(
     // All-or-nothing restore. DB work only — filesystem placement happens
     // after the commit.
     await DbUtilsTransaction(async () => {
+      // Restore the book metadata captured with the snapshot. Legacy snapshots
+      // have no `book` field: content is restored, metadata stays current.
+      if (snapshot.book) {
+        await DbUtilsExecSQL(
+          SQL_QUERIES.UPDATE_BOOK_METADATA[DbUtilsGetType()],
+          [
+            snapshot.book.name ?? null,
+            snapshot.book.description ?? null,
+            snapshot.book.writingGoal ?? null,
+            version.bookId,
+          ],
+        );
+      }
+
       // Delete current sections (and their property values) for the book
       await DbUtilsExecSQL(
         SQL_QUERIES.DELETE_SECTION_PROPERTIES_FOR_BOOK[DbUtilsGetType()],
@@ -421,5 +501,11 @@ const SQL_QUERIES = {
   DELETE_BOOK_PROPERTIES: {
     postgres: 'DELETE FROM book_properties WHERE "bookId" = $1',
     sqlite: "DELETE FROM book_properties WHERE bookId = ?",
+  },
+  UPDATE_BOOK_METADATA: {
+    postgres:
+      'UPDATE books SET "name" = COALESCE($1, "name"), "description" = COALESCE($2, "description"), "writingGoal" = COALESCE($3, "writingGoal") WHERE "id" = $4',
+    sqlite:
+      "UPDATE books SET name = COALESCE(?, name), description = COALESCE(?, description), writingGoal = COALESCE(?, writingGoal) WHERE id = ?",
   },
 };

@@ -20,6 +20,24 @@ export const DbUtilsGetDatabase = _DbUtilsGetDatabase;
 export const convertToPostgresPlaceholders = _convertToPostgresPlaceholders;
 export const DbUtilsGetType = _DbUtilsGetType;
 
+const TABLE_EXISTS_QUERIES = {
+  postgres:
+    "SELECT 1 FROM information_schema.tables WHERE table_schema = ANY(current_schemas(false)) AND table_name = $1",
+  sqlite: "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+};
+
+/**
+ * Whether a table exists in the current schema. Used to skip optional deletes
+ * for tables that older migrations dropped, instead of running a statement
+ * that would abort the surrounding PostgreSQL transaction.
+ */
+export async function DbUtilsTableExists(tableName: string): Promise<boolean> {
+  const rows = await DbUtilsQuerySQL(TABLE_EXISTS_QUERIES[DbUtilsGetType()], [
+    tableName,
+  ]);
+  return rows.length > 0;
+}
+
 async function RunExecSQL(
   context: Span | undefined,
   sql: string,

@@ -289,7 +289,15 @@ export async function BookAnalysisGenerate(
 
   const filePath = getFilePath(bookId);
   await fs.ensureDir(path.dirname(filePath));
-  await fs.writeJson(filePath, result);
+  // Write atomically: a crash mid-write must never leave a corrupt cache.
+  const tmpPath = `${filePath}.${crypto.randomUUID()}.tmp`;
+  try {
+    await fs.writeJson(tmpPath, result);
+    await fs.rename(tmpPath, filePath);
+  } catch (err) {
+    await fs.remove(tmpPath).catch(() => undefined);
+    throw err;
+  }
   logger.info(
     `[BookAnalysis] Analysis generated and cached for book "${book.name}"`,
   );

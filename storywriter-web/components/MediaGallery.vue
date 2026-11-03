@@ -120,7 +120,7 @@ const props = defineProps({
   selectedId: { type: String, default: null },
 });
 
-const emit = defineEmits(["select"]);
+const emit = defineEmits(["select", "deleted"]);
 
 const mediaStore = useMediaStore();
 
@@ -268,9 +268,11 @@ function confirmDelete() {
 }
 
 async function deleteMedia() {
+  const deletedId = selectedItem.value.id;
   try {
-    await mediaStore.deleteMedia(props.bookId, selectedItem.value.id);
+    await mediaStore.deleteMedia(props.bookId, deletedId);
     showDeleteDialog.value = false;
+    emit("deleted", deletedId);
   } catch (e) {
     error.value = e.response?.data?.error || "Failed to delete media";
   }

@@ -210,6 +210,7 @@
         :book-id="book.id"
         :selected-id="selectedMediaId"
         @select="selectMedia"
+        @deleted="handleMediaDeleted"
       />
 
       <AnalysisViewer
@@ -548,6 +549,17 @@ const mediaList = computed(() => {
 
 function selectMedia(media) {
   selectedMediaId.value = media?.id || null;
+}
+
+// The server clears every section reference to a deleted media item; refresh
+// the sections so editors stop pointing at it.
+async function handleMediaDeleted(mediaId) {
+  if (selectedMediaId.value === mediaId) {
+    selectedMediaId.value = null;
+  }
+  if (book.value) {
+    await sectionsStore.fetchByBook(book.value.id);
+  }
 }
 
 const currentSection = computed(() => {
