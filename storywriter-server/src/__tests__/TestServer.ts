@@ -291,6 +291,11 @@ export class TestServer {
     return DbUtilsExecSQL(undefined, sql, params);
   }
 
+  /** Run a multi-statement SQL script (e.g. a migration file) on SQLite. */
+  public async execMulti(sql: string): Promise<void> {
+    DbUtilsGetDatabase().exec(sql);
+  }
+
   public async query(sql: string, params: unknown[] = []): Promise<any[]> {
     return DbUtilsQuerySQL(undefined, sql, params);
   }

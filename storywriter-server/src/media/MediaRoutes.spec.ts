@@ -2,6 +2,18 @@ import * as fs from "fs-extra";
 import * as path from "path";
 import { TestServer, TestUser } from "../__tests__/TestServer";
 
+jest.mock("./MediaData", () => {
+  const actual = jest.requireActual("./MediaData");
+  return {
+    ...actual,
+    MediaDataAdd: jest.fn(actual.MediaDataAdd),
+  };
+});
+
+import * as MediaData from "./MediaData";
+
+const mediaDataAddMock = MediaData.MediaDataAdd as jest.Mock;
+
 const PNG_BYTES = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
   Buffer.alloc(32, 3),
@@ -156,5 +168,82 @@ describe("Media routes", () => {
       user.token,
     );
     expect(res.statusCode).toBe(415);
+  });
+
+  it("clears section references when media is deleted and exports the placeholder", async () => {
+    const upload = await server.uploadMedia(
+      user.token,
+      bookId,
+      "delete-me.png",
+      PNG_BYTES,
+      "image/png",
+    );
+    expect(upload.statusCode).toBe(201);
+    const media = JSON.parse(upload.body);
+
+    const root = await server.getRootSection(user.token, bookId);
+    const sectionRes = await server.inject("POST", "/api/sections", user.token, {
+      bookId,
+      parentId: root.id,
+      type: "media",
+      title: "Illustration",
+      mediaId: media.id,
+    });
+    expect(sectionRes.statusCode).toBe(201);
+    const section = JSON.parse(sectionRes.body);
+
+    const del = await server.inject(
+      "DELETE",
+      `/api/books/${bookId}/media/${media.id}`,
+      user.token,
+    );
+    expect(del.statusCode).toBe(200);
+
+    const rows = await server.query(
+      "SELECT type, mediaId FROM sections WHERE id = ?",
+      [section.id],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].type).toBe("media");
+    expect(rows[0].mediaId).toBeNull();
+
+    const exportRes = await server.inject(
+      "GET",
+      `/api/books/${bookId}/export?format=markdown`,
+      user.token,
+    );
+    expect(exportRes.statusCode).toBe(200);
+    expect(exportRes.body).toContain("[missing image:");
+  });
+
+  it("removes the written file when the metadata insert fails", async () => {
+    const mediaRoot = path.join(server.config.DATA_DIR, "media", bookId);
+    const dirsBefore = fs.existsSync(mediaRoot)
+      ? fs.readdirSync(mediaRoot).sort()
+      : [];
+    const countBefore = await server.query(
+      "SELECT COUNT(*) AS count FROM media WHERE bookId = ?",
+      [bookId],
+    );
+
+    mediaDataAddMock.mockRejectedValueOnce(new Error("insert failed"));
+    const res = await server.uploadMedia(
+      user.token,
+      bookId,
+      "orphan.png",
+      PNG_BYTES,
+      "image/png",
+    );
+    expect(res.statusCode).toBe(500);
+
+    const dirsAfter = fs.existsSync(mediaRoot)
+      ? fs.readdirSync(mediaRoot).sort()
+      : [];
+    expect(dirsAfter).toEqual(dirsBefore);
+    const countAfter = await server.query(
+      "SELECT COUNT(*) AS count FROM media WHERE bookId = ?",
+      [bookId],
+    );
+    expect(Number(countAfter[0].count)).toBe(Number(countBefore[0].count));
   });
 });

@@ -19,7 +19,9 @@ import {
   MediaDataDelete,
   MediaDataGetBySlug,
   MediaDataCreateNew,
+  MediaDataClearSectionReferences,
 } from "./MediaData";
+import { DbUtilsTransaction } from "../utils/DbTransaction";
 
 // Raster images can be shown inline; SVG can contain scripts so it is always
 // offered as a download. All responses carry nosniff.
@@ -176,8 +178,16 @@ export class MediaRoutes {
       const filePath = path.join(mediaDir, media.filename);
       await fs.writeFile(filePath, buffer);
 
-      // Save metadata to DB
-      await MediaDataAdd(media);
+      // Save metadata to DB; a failed insert must not leave an orphaned file
+      try {
+        await MediaDataAdd(media);
+      } catch (err) {
+        await fs.rm(mediaDir, { recursive: true, force: true }).catch(() => undefined);
+        req.log.error(
+          `Media metadata insert failed for book ${bookId} (${media.id}): ${(err as Error).message}`,
+        );
+        throw err;
+      }
 
       return res.status(201).send(media);
     });
@@ -237,19 +247,25 @@ export class MediaRoutes {
         return res.status(404).send({ error: "Media Not Found" });
       }
 
-      // Delete file from disk (server-generated ids only; a hostile id or
-      // filename must never escape the book media dir)
+      // Clear the section references and delete the metadata atomically, then
+      // remove the files: a rollback never leaves a row without its file.
+      await DbUtilsTransaction(async () => {
+        await MediaDataClearSectionReferences(bookId, id);
+        await MediaDataDelete(id);
+      });
+
+      // Server-generated ids only; a hostile id or filename must never escape
+      // the book media dir.
       if (IsSafePathSegment(id) && IsSafePathSegment(bookId)) {
         const mediaDir = SafeJoin(BookMediaDir(config, bookId), id);
         try {
           await fs.rm(mediaDir, { recursive: true, force: true });
-        } catch {
-          // Directory might not exist, continue
+        } catch (err) {
+          req.log.error(
+            `Media file removal failed for ${bookId}/${id}: ${(err as Error).message}`,
+          );
         }
       }
-
-      // Delete metadata from DB
-      await MediaDataDelete(id);
 
       return res.status(200).send({ success: true });
     });

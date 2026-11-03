@@ -5,6 +5,7 @@ import {
   DbUtilsGetType,
 } from "../utils/DbUtils";
 import { collectSubtree, subtreeDepth } from "./SectionsTree";
+import { DbUtilsTransaction } from "../utils/DbTransaction";
 
 export const MAX_COPY_NODES = 1000;
 export const MAX_COPY_DEPTH = 100;
@@ -192,32 +193,36 @@ export async function SectionsDataDelete(
   id: string,
   bookId: string,
 ): Promise<void> {
-  const all = await SectionsDataListByBook(bookId);
-  const subtree = collectSubtree(id, all);
-  const subtreeIds = subtree.map((section) => section.id);
-  // Rows from other books may still point at this subtree (data created
-  // before cross-book parents were rejected). They must survive the delete,
-  // so move them under their own book's root first.
-  await SectionsDataDetachForeignChildren(subtreeIds, bookId);
-  // Children first so parent rows are never deleted while their children still
-  // reference them (PostgreSQL enforces the self-referencing FK).
-  const orderedIds = [...subtreeIds].reverse();
-  for (let i = 0; i < orderedIds.length; i += DELETE_CHUNK_SIZE) {
-    const chunk = orderedIds.slice(i, i + DELETE_CHUNK_SIZE);
-    const placeholders = chunk.map(() => "?").join(", ");
-    await DbUtilsExecSQL(
-      `DELETE FROM section_properties WHERE "sectionId" IN (${placeholders})`,
-      chunk,
-    );
-  }
-  for (let i = 0; i < orderedIds.length; i += DELETE_CHUNK_SIZE) {
-    const chunk = orderedIds.slice(i, i + DELETE_CHUNK_SIZE);
-    const placeholders = chunk.map(() => "?").join(", ");
-    await DbUtilsExecSQL(
-      `DELETE FROM sections WHERE "id" IN (${placeholders})`,
-      chunk,
-    );
-  }
+  // All-or-nothing: a failure must not leave partially deleted or detached
+  // sections behind.
+  await DbUtilsTransaction(async () => {
+    const all = await SectionsDataListByBook(bookId);
+    const subtree = collectSubtree(id, all);
+    const subtreeIds = subtree.map((section) => section.id);
+    // Rows from other books may still point at this subtree (data created
+    // before cross-book parents were rejected). They must survive the delete,
+    // so move them under their own book's root first.
+    await SectionsDataDetachForeignChildren(subtreeIds, bookId);
+    // Children first so parent rows are never deleted while their children still
+    // reference them (PostgreSQL enforces the self-referencing FK).
+    const orderedIds = [...subtreeIds].reverse();
+    for (let i = 0; i < orderedIds.length; i += DELETE_CHUNK_SIZE) {
+      const chunk = orderedIds.slice(i, i + DELETE_CHUNK_SIZE);
+      const placeholders = chunk.map(() => "?").join(", ");
+      await DbUtilsExecSQL(
+        `DELETE FROM section_properties WHERE "sectionId" IN (${placeholders})`,
+        chunk,
+      );
+    }
+    for (let i = 0; i < orderedIds.length; i += DELETE_CHUNK_SIZE) {
+      const chunk = orderedIds.slice(i, i + DELETE_CHUNK_SIZE);
+      const placeholders = chunk.map(() => "?").join(", ");
+      await DbUtilsExecSQL(
+        `DELETE FROM sections WHERE "id" IN (${placeholders})`,
+        chunk,
+      );
+    }
+  });
 }
 
 async function SectionsDataDetachForeignChildren(

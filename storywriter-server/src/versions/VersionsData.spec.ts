@@ -300,6 +300,63 @@ describe("Versions", () => {
     server.config.VERSIONS_MAX_PER_BOOK = 50;
   });
 
+  it("restores the book metadata captured in the snapshot", async () => {
+    const version = await VersionsDataCreate(bookId, "with metadata", server.config);
+    expect(JSON.parse(version.snapshot).book).toEqual({
+      name: "Versioned Book",
+      description: "",
+      writingGoal: 0,
+    });
+
+    await server.inject("PUT", `/api/books/${bookId}`, user.token, {
+      name: "Changed Name",
+      description: "Changed Description",
+      writingGoal: 999,
+    });
+    const restoreRes = await server.inject(
+      "POST",
+      `/api/books/${bookId}/versions/${version.id}/restore`,
+      user.token,
+    );
+    expect(restoreRes.statusCode).toBe(200);
+
+    const book = JSON.parse(
+      (await server.inject("GET", `/api/books/${bookId}`, user.token)).body,
+    );
+    expect(book.name).toBe("Versioned Book");
+    expect(book.description).toBe("");
+    expect(book.writingGoal).toBe(0);
+  });
+
+  it("leaves the current metadata when restoring a legacy snapshot without it", async () => {
+    const version = await VersionsDataCreate(bookId, "legacy", server.config);
+    const snapshot = JSON.parse(version.snapshot);
+    delete snapshot.book;
+    await server.exec("UPDATE book_versions SET snapshot = ? WHERE id = ?", [
+      JSON.stringify(snapshot),
+      version.id,
+    ]);
+
+    await server.inject("PUT", `/api/books/${bookId}`, user.token, {
+      name: "Keep Me",
+      description: "Kept",
+      writingGoal: 42,
+    });
+    const restoreRes = await server.inject(
+      "POST",
+      `/api/books/${bookId}/versions/${version.id}/restore`,
+      user.token,
+    );
+    expect(restoreRes.statusCode).toBe(200);
+
+    const book = JSON.parse(
+      (await server.inject("GET", `/api/books/${bookId}`, user.token)).body,
+    );
+    expect(book.name).toBe("Keep Me");
+    expect(book.description).toBe("Kept");
+    expect(book.writingGoal).toBe(42);
+  });
+
   it("removes media, version media and the analysis cache when the book is deleted", async () => {
     // Analysis cache file as BookAnalysis would write it.
     const cachePath = path.join(

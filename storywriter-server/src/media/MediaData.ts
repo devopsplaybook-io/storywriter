@@ -78,6 +78,21 @@ export async function MediaDataDelete(id: string): Promise<void> {
   await DbUtilsExecSQL(SQL_QUERIES.DELETE_MEDIA[DbUtilsGetType()], [id]);
 }
 
+/**
+ * Clear dangling `sections.mediaId` references to a media item. Run in the
+ * same transaction as the metadata delete so a section can never point at a
+ * media row that no longer exists. The section keeps its `media` type.
+ */
+export async function MediaDataClearSectionReferences(
+  bookId: string,
+  mediaId: string,
+): Promise<void> {
+  await DbUtilsExecSQL(
+    SQL_QUERIES.CLEAR_SECTION_MEDIA_REFERENCES[DbUtilsGetType()],
+    [bookId, mediaId],
+  );
+}
+
 export async function MediaDataDeleteByBook(bookId: string): Promise<void> {
   await DbUtilsExecSQL(SQL_QUERIES.DELETE_MEDIA_BY_BOOK[DbUtilsGetType()], [
     bookId,
@@ -143,6 +158,11 @@ const SQL_QUERIES = {
   DELETE_MEDIA: {
     postgres: 'DELETE FROM media WHERE "id" = $1',
     sqlite: "DELETE FROM media WHERE id = ?",
+  },
+  CLEAR_SECTION_MEDIA_REFERENCES: {
+    postgres:
+      'UPDATE sections SET "mediaId" = NULL WHERE "bookId" = $1 AND "mediaId" = $2',
+    sqlite: "UPDATE sections SET mediaId = NULL WHERE bookId = ? AND mediaId = ?",
   },
   DELETE_MEDIA_BY_BOOK: {
     postgres: 'DELETE FROM media WHERE "bookId" = $1',

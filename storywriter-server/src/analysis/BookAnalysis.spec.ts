@@ -4,6 +4,8 @@ jest.mock("fs-extra", () => ({
   readJson: jest.fn(),
   writeJson: jest.fn(),
   ensureDir: jest.fn(),
+  rename: jest.fn(async () => undefined),
+  remove: jest.fn(async () => undefined),
 }));
 
 const fsMock = jest.requireMock("fs-extra") as {
@@ -11,6 +13,8 @@ const fsMock = jest.requireMock("fs-extra") as {
   readJson: jest.Mock;
   writeJson: jest.Mock;
   ensureDir: jest.Mock;
+  rename: jest.Mock;
+  remove: jest.Mock;
 };
 
 jest.mock("../books/BooksData", () => ({
@@ -252,6 +256,26 @@ describe("BookAnalysis — generate", () => {
     expect(result.improvements).toBe("- Thin ending");
     expect(result.suggestions).toBe("- Expand chapter 2");
     expect(fsMock.writeJson).toHaveBeenCalledTimes(1);
+    // The cache is written to a temp file and renamed into place.
+    const tmpPath = fsMock.writeJson.mock.calls[0][0] as string;
+    expect(tmpPath).toMatch(/\.tmp$/);
+    expect(fsMock.rename).toHaveBeenCalledWith(
+      tmpPath,
+      expect.stringMatching(/book-analysis-book-1\.json$/),
+    );
+  });
+
+  it("removes the temp file and rethrows when the cache write fails", async () => {
+    callLLMWithRetryMock.mockResolvedValue(
+      "## Summary\nGood book.\n\n## Strengths\n- Clear voice\n\n## Areas for Improvement\n- Thin ending\n\n## Suggestions\n- Expand chapter 2",
+    );
+    fsMock.writeJson.mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(BookAnalysisGenerate("book-1")).rejects.toThrow("disk full");
+
+    const tmpPath = fsMock.writeJson.mock.calls[0][0] as string;
+    expect(fsMock.remove).toHaveBeenCalledWith(tmpPath);
+    expect(fsMock.rename).not.toHaveBeenCalled();
   });
 
   it("throws on LLM failure and does not cache the error as report content", async () => {
