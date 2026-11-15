@@ -33,9 +33,10 @@ export default defineNuxtConfig({
   },
   pwa: {
     registerType: "autoUpdate",
-    workbox: {
+    // @vite-pwa/nuxt v2 renamed the `workbox` option to `generateSW`
+    generateSW: {
       globPatterns: ["**/*.{js,css,html}", "images/*.{svg,png}"],
-      // @vite-pwa/nuxt rewrites index.html entries to "/" in the precache
+      // the module rewrites index.html entries to "/" in the precache
       // manifest, so the fallback must reference "/" not "index.html"
       navigateFallback: "/",
       cleanupOutdatedCaches: true,

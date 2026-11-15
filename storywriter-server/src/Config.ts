@@ -39,6 +39,12 @@ export class Config extends ConfigBase {
   // reverse proxy (the bundled config sets it for the proxied deployment).
   public TRUST_PROXY = false;
   public PASSWORD_MIN_LENGTH = 8;
+  // common-utils 2.6.0 dropped its access-token default from 93 days to 1 hour,
+  // expecting clients to renew with POST /session; this client only renews when
+  // a page loads (stores/auth.ts), so an hourly default would sign active users
+  // out mid-session. Keep a long lifetime; the library still caps every token
+  // at JWT_SESSION_MAX_DURATION (30 days) after the first sign-in.
+  public JWT_VALIDITY_DURATION = 30 * 24 * 3600;
 
   // Manuscript export budgets: the whole content, and every referenced media
   // file combined, must fit these budgets or the export fails with 413
@@ -73,6 +79,9 @@ export class Config extends ConfigBase {
     this.addConfigField({ field: "RATE_LIMIT_LOGIN_WINDOW_MS" });
     this.addConfigField({ field: "TRUST_PROXY" });
     this.addConfigField({ field: "PASSWORD_MIN_LENGTH" });
+    // Re-registering the inherited field is what makes reload() use this
+    // class's value as the default instead of the ConfigBase one.
+    this.addConfigField({ field: "JWT_VALIDITY_DURATION" });
     this.addConfigField({ field: "LLM_USER_CONCURRENCY" });
     this.addConfigField({ field: "LLM_DAILY_QUOTA" });
     this.addConfigField({ field: "IMPORT_EXPORT_CONCURRENCY" });
