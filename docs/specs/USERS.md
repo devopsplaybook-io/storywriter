@@ -10,7 +10,7 @@
 ## Authentication
 
 - [x] JWT-based session tokens stored in localStorage.
-- [x] Session tokens are renewed periodically.
+- [x] Session tokens are valid for `JWT_VALIDITY_DURATION` (30 days here; common-utils itself defaults to 1 hour) and are renewed whenever the web client re-validates the session on page load. The library caps any token at `JWT_SESSION_MAX_DURATION` (30 days from the first sign-in), so after that period the user signs in again.
 - [x] Login page detects if the server is uninitialized and offers admin account creation.
 - [x] Login failures are throttled per client IP + username: at most `RATE_LIMIT_LOGIN_MAX` failed attempts per `RATE_LIMIT_LOGIN_WINDOW_MS`; successful logins do not consume the budget, so one user's failures never lock out other users. Exceeding the budget returns HTTP 429 with `Retry-After` and `{ "error": "Too many login attempts, try again later" }`.
 - [x] Behind a reverse proxy, `TRUST_PROXY` must be `true` so the throttle keys on the forwarded client address (X-Forwarded-For); it is `false` by default and must only be enabled when all traffic arrives through a trusted proxy (the bundled `config.json` enables it for the proxied deployment).

@@ -1,7 +1,7 @@
 <template>
   <div id="page-layout">
     <header>
-      <VitePwaManifest />
+      <NuxtPwaManifest />
       <Navigation />
     </header>
     <main>

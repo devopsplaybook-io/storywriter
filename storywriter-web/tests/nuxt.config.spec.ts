@@ -26,9 +26,9 @@ describe("nuxt.config service worker runtime caching", () => {
     ) => config;
     const config = (await import("../nuxt.config")).default as {
       app: { head: { charset?: string } };
-      pwa: { workbox: { runtimeCaching: RuntimeCachingRule[] } };
+      pwa: { generateSW: { runtimeCaching: RuntimeCachingRule[] } };
     };
-    runtimeCaching = config.pwa?.workbox?.runtimeCaching ?? [];
+    runtimeCaching = config.pwa?.generateSW?.runtimeCaching ?? [];
     appHead = config.app?.head ?? {};
   });
 
