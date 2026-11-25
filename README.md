@@ -13,3 +13,15 @@ Configure the connection on the server via `config.json` or environment variable
 | `LLM_MODEL` | no | `deepseek-chat` | Model name sent with each request. |
 
 The web UI reports availability via `GET /api/llm/status` (`{ available, model }`, authentication required; the API key is never returned) and disables AI actions with an explanation when the server has no key configured. Checking availability costs nothing — no request is made to the LLM provider.
+
+## Authentication sessions
+
+Sessions follow the policy documented in
+[`common-utils`](https://github.com/devopsplaybook-io/common-utils/blob/main/docs/auth-session-policy.md)
+with one deliberate deviation: the token lives 30 days
+(`JWT_VALIDITY_DURATION` = `2592000`) and the absolute session is capped at the
+same 30 days (`JWT_SESSION_MAX_DURATION` = `2592000`, inherited from
+common-utils), because the web client only renews the session when a page loads.
+Both values are re-registered with `addConfigField` so a `config.json` or
+environment value survives `reload()`, and `Config.spec.ts` pins the literal
+effective values.

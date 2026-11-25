@@ -28,8 +28,10 @@ describe("Config", () => {
       expect(config.API_PORT).toBe(8080);
       expect(config.DATABASE_TYPE).toBe("sqlite");
       // common-utils defaults to 1 hour; this app keeps a 30-day token because
-      // it only renews the session when a page loads.
-      expect(config.JWT_VALIDITY_DURATION).toBe(30 * 24 * 3600);
+      // it only renews the session when a page loads. The inherited cap stays
+      // at 30 days, so the documented policy is 2592000 / 2592000.
+      expect(config.JWT_VALIDITY_DURATION).toBe(2592000);
+      expect(config.JWT_SESSION_MAX_DURATION).toBe(2592000);
       expect(config.LLM_API_URL).toBe(
         "https://api.deepseek.com/chat/completions",
       );
@@ -99,8 +101,9 @@ describe("Config", () => {
       expect(config.APPLICATION_TITLE).toBe("Storywriter");
       // reload() resets every registered field to its default first: the
       // re-registered token lifetime must survive it, not fall back to the
-      // ConfigBase 1 hour.
-      expect(config.JWT_VALIDITY_DURATION).toBe(30 * 24 * 3600);
+      // ConfigBase 1 hour; the cap matches the documented 2592000.
+      expect(config.JWT_VALIDITY_DURATION).toBe(2592000);
+      expect(config.JWT_SESSION_MAX_DURATION).toBe(2592000);
     });
 
     it("should override config file values with environment variables", async () => {
