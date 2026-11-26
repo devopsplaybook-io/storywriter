@@ -80,12 +80,17 @@ export const useAuthStore = defineStore("auth", {
       this.initialized = true;
     },
 
+    setSession(token: string, user: Record<string, unknown> | null) {
+      this.token = token;
+      this.user = user;
+      localStorage.setItem("token", token);
+      if (user) localStorage.setItem("user", JSON.stringify(user));
+      else localStorage.removeItem("user");
+    },
+
     async login(name: string, password: string) {
       const res = await api.post("/users/session", { name, password });
-      this.token = res.data.token;
-      this.user = res.data.user;
-      localStorage.setItem("token", res.data.token);
-      localStorage.setItem("user", JSON.stringify(res.data.user));
+      this.setSession(res.data.token, res.data.user);
       return res.data;
     },
 

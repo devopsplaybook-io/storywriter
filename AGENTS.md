@@ -54,10 +54,11 @@ Be aware of these common SDD anti-patterns:
 `JWT_VALIDITY_DURATION` and `JWT_SESSION_MAX_DURATION` follow
 [`docs/auth-session-policy.md`](https://github.com/devopsplaybook-io/common-utils/blob/main/docs/auth-session-policy.md).
 This app intentionally keeps a 30-day validity **and** a 30-day cap (the client
-only renews when a page loads), and deliberately stays on common-utils 2.9.2:
-re-registering `JWT_VALIDITY_DURATION` with `addConfigField` is what keeps the
-30-day default after `reload()`. `Config.spec.ts` asserts the literal values
-(`2592000` / `2592000`); update it together with the policy doc if it changes.
+only renews when a page loads). It runs on common-utils 2.12+ (the release that
+adds the optional login-with-code routes): the `addConfigField`
+re-registration in `Config.ts` is what keeps the 30-day default after
+`reload()`. `Config.spec.ts` asserts the literal values (`2592000` /
+`2592000`); update it together with the policy doc if it changes.
 
 ## Project Structure
 

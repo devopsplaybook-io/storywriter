@@ -59,6 +59,23 @@
   --color-status-blocked: #dc3545;
 }
 
+/* Shared component contract (@devopsplaybook.io/common-web) mapped onto the
+   PicoCSS v2 tokens; the var() indirection follows data-theme automatically. */
+:root {
+  --color-surface: var(--pico-card-background-color);
+  --color-surface-raised: var(--pico-code-background-color);
+  --color-text: var(--pico-color);
+  --color-text-muted: var(--pico-muted-color);
+  --color-border: var(--pico-muted-border-color);
+  --color-primary: var(--pico-primary-background);
+  --color-primary-hover: var(--pico-primary-hover-background);
+  --color-on-primary: var(--pico-primary-inverse);
+  --color-error: var(--pico-del-color);
+  --color-success: var(--pico-ins-color);
+  --color-warning: light-dark(#8a5a00, #f0b429);
+  --space-base: var(--space-md);
+}
+
 /* Reset */
 html,
 body {

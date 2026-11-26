@@ -15,6 +15,17 @@
 - [x] Login failures are throttled per client IP + username: at most `RATE_LIMIT_LOGIN_MAX` failed attempts per `RATE_LIMIT_LOGIN_WINDOW_MS`; successful logins do not consume the budget, so one user's failures never lock out other users. Exceeding the budget returns HTTP 429 with `Retry-After` and `{ "error": "Too many login attempts, try again later" }`.
 - [x] Behind a reverse proxy, `TRUST_PROXY` must be `true` so the throttle keys on the forwarded client address (X-Forwarded-For); it is `false` by default and must only be enabled when all traffic arrives through a trusted proxy (the bundled `config.json` enables it for the proxied deployment).
 
+## Login with a Code
+
+- [x] Optional cross-device sign-in, off by default (`LOGIN_CODE_ENABLED`). A signed-out device shows an 8-character code (from a 20-letter alphabet) and polls; an already-signed-in user approves it from Settings ("Log in on another device").
+- [x] Codes rotate every 30 s with a 60 s grace window; a login request lives 5 minutes and tolerates at most 5 wrong attempts before it fails.
+- [x] The approving device must hold an interactive session. API tokens are refused (HTTP 403 `FORBIDDEN`), so a leaked token cannot approve devices.
+- [x] Redemption is single-use: polling returns the session once, and a second poll for the same request returns HTTP 409 `ALREADY_USED`.
+- [x] Every login-code response carries `Cache-Control: no-store`. Codes, request tokens and session tokens are never logged.
+- [x] The UI (login page and Settings) hides the feature unless the server reports it available via `GET /api/users/login-codes/capabilities`; when the flag is off those routes are not mounted (404) and the web app falls back to password login only.
+- [x] Login-code traffic (create/poll/preview/approve/cancel) is not counted by the failed-password login throttle; password login and its throttle semantics are unchanged.
+- [x] Requires the `users_login_codes` table, shipped as migration `init-0011` for both SQLite and PostgreSQL and applied at boot even while the flag is off.
+
 ## Password Change
 
 - [x] A **Change Password** button in Settings opens a dialog.
@@ -51,4 +62,4 @@
 - [x] Admin can add new users.
 - [x] Admin can delete users (except themselves).
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-11-02_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-11-26_

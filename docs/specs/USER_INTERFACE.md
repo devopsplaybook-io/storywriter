@@ -82,12 +82,14 @@ The book detail page uses a **responsive split-pane layout** following the feedw
 
 - [x] Theme toggle (light/dark/system).
 - [x] Account info and password change form.
+- [x] **Log in on another device**: when the server reports login-with-a-code available, the Account section shows the shared authorize card (enter the code shown on the other device, review the account/device, approve). It is hidden entirely when the feature is unavailable.
 - [x] On mobile: stacked setting rows, wrapping theme controls.
 
 ### Login (`/login`)
 
-- [x] Centered login card (max-width 400px).
+- [x] Centered login card (max-width 400px); the card and, when available, the **Sign in with a code** card sit side by side in a responsive grid and stack under 768px.
 - [x] Detects uninitialized server and offers admin account creation flow.
+- [x] The code card is hidden unless the server reports login-with-a-code available (so a flag-off or older server shows password login only). "Use password instead" on the card focuses the username field.
 
 ## Components
 
@@ -99,6 +101,6 @@ The book detail page uses a **responsive split-pane layout** following the feedw
 - [x] **Dialogs**: `<dialog>` elements with `<article>` inside, following PicoCSS patterns.
 - [x] **Loading indicator**: animated CSS bars pattern.
 - [x] **Markdown body**: `.markdown-body` class for rendered markdown content.
-- [x] **Design tokens**: CSS custom properties for spacing (`--space-*`), radius (`--radius-*`), typography (`--text-*`), transitions (`--transition-*`), and shadows (`--shadow-*`).
+- [x] **Design tokens**: CSS custom properties for spacing (`--space-*`), radius (`--radius-*`), typography (`--text-*`), transitions (`--transition-*`), and shadows (`--shadow-*`). Shared common-web components read a `--color-*` contract (`--color-surface`, `--color-text`, `--color-primary`, …) that is bridged onto the PicoCSS v2 tokens, so those components follow the light/dark theme automatically.
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-11-03_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-11-26_
