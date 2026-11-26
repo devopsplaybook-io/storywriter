@@ -61,7 +61,6 @@
         v-if="showLoginCode"
         :service="loginCodeService"
         class="login-card login-code-card"
-        @approved="router.push('/')"
         @use-password="focusUsername"
       />
     </div>
@@ -108,6 +107,15 @@ const showLoginCode = computed(
 function focusUsername() {
   nameInput.value?.focus();
 }
+
+// The code card unmounts as soon as the session is stored, so navigation
+// cannot rely on its approved event.
+watch(
+  () => authStore.isAuthenticated,
+  (isAuthenticated) => {
+    if (isAuthenticated) router.push("/");
+  },
+);
 
 onMounted(async () => {
   await authStore.init();
