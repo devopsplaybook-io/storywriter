@@ -35,6 +35,15 @@
         </button>
       </div>
 
+      <div v-if="loginCodeAvailable" class="authorize-device">
+        <AuthorizeDeviceCard
+          :service="loginCodeService"
+          :heading-level="3"
+          variant="plain"
+          :labels="{ title: 'Log in on another device' }"
+        />
+      </div>
+
       <button class="btn-logout" @click="handleLogout">
         <i class="bi bi-box-arrow-right" /> Logout
       </button>
@@ -238,10 +247,18 @@ import {
   PasswordMinimumHint,
   PasswordTooShort,
 } from "../utils/passwordPolicy";
+import AuthorizeDeviceCard from "@devopsplaybook.io/common-web/components/AuthorizeDeviceCard.vue";
+import {
+  createAppLoginCodeService,
+  LoginCodeIsAvailable,
+} from "../utils/loginCodes";
 const authStore = useAuthStore();
 const router = useRouter();
 const toggleTheme = inject("toggleTheme");
 const theme = inject("theme");
+
+const loginCodeService = createAppLoginCodeService();
+const loginCodeAvailable = ref(false);
 
 // Password change
 const showPasswordDialog = ref(false);
@@ -392,6 +409,7 @@ async function revokeToken() {
 onMounted(async () => {
   if (authStore.isAuthenticated) {
     await loadTokens();
+    loginCodeAvailable.value = await LoginCodeIsAvailable(loginCodeService);
   }
 });
 </script>
@@ -482,6 +500,10 @@ section h2 {
 .user-info {
   margin-bottom: var(--space-sm);
   font-size: var(--text-md);
+}
+
+.authorize-device {
+  margin: var(--space-md) 0;
 }
 
 .error-message {

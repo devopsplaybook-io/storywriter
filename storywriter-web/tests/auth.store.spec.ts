@@ -58,4 +58,32 @@ describe("auth store — stored user", () => {
     expect(store.user).toBeNull();
     expect(store.token).toBe("");
   });
+
+  it("setSession writes the token and user that login-code redemption yields", () => {
+    const store = useAuthStore();
+
+    store.setSession("jwt-1", { id: "u9", name: "Grace", role: "admin" });
+
+    expect(store.token).toBe("jwt-1");
+    expect(store.user).toMatchObject({ id: "u9", name: "Grace" });
+    expect(store.isAuthenticated).toBe(true);
+    expect(store.isAdmin).toBe(true);
+    expect(store.currentUser).toMatchObject({ id: "u9" });
+    expect(localStorage.getItem("token")).toBe("jwt-1");
+    expect(JSON.parse(localStorage.getItem("user") ?? "null")).toMatchObject({
+      id: "u9",
+    });
+  });
+
+  it("setSession clears a stored user when the user is null", () => {
+    localStorage.setItem("user", JSON.stringify({ id: "u1" }));
+    const store = useAuthStore();
+
+    store.setSession("jwt-2", null);
+
+    expect(store.user).toBeNull();
+    expect(store.isAuthenticated).toBe(true);
+    expect(localStorage.getItem("user")).toBeNull();
+    expect(localStorage.getItem("token")).toBe("jwt-2");
+  });
 });

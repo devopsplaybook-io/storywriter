@@ -25,3 +25,19 @@ common-utils), because the web client only renews the session when a page loads.
 Both values are re-registered with `addConfigField` so a `config.json` or
 environment value survives `reload()`, and `Config.spec.ts` pins the literal
 effective values.
+
+## Login with a code
+
+Set `LOGIN_CODE_ENABLED=true` (default: off) to let a signed-out device sign in
+by showing an 8-character code that an already signed-in user approves from
+Settings. The protocol is documented in
+[`common-utils`](https://github.com/devopsplaybook-io/common-utils/blob/main/docs/login-with-code.md).
+
+- Requires the `users_login_codes` table; both database backends ship it as
+  migration `init-0011`, applied at boot even while the flag stays off.
+- The login page and Settings only show the feature when the server reports it
+  available (`GET /api/users/login-codes/capabilities`), so toggling the flag
+  needs no web change.
+- Approving requires an interactive session; API tokens are refused (403).
+- Login-code traffic is exempt from the failed-password login throttle, and
+  every login-code response is sent with `Cache-Control: no-store`.

@@ -19,6 +19,7 @@ describe("Config", () => {
     delete process.env.APPLICATION_TITLE;
     delete process.env.TRUST_PROXY;
     delete process.env.PASSWORD_MIN_LENGTH;
+    delete process.env.LOGIN_CODE_ENABLED;
   });
 
   describe("constructor", () => {
@@ -39,6 +40,8 @@ describe("Config", () => {
       expect(config.TRUST_PROXY).toBe(false);
       expect(config.PASSWORD_MIN_LENGTH).toBe(8);
       expect(config.CORS_POLICY_ORIGIN).toBe("");
+      // Cross-device login with a code is opt-in.
+      expect(config.LOGIN_CODE_ENABLED).toBe(false);
     });
 
     it("should read DATA_DIR from environment", () => {
@@ -104,6 +107,7 @@ describe("Config", () => {
       // ConfigBase 1 hour; the cap matches the documented 2592000.
       expect(config.JWT_VALIDITY_DURATION).toBe(2592000);
       expect(config.JWT_SESSION_MAX_DURATION).toBe(2592000);
+      expect(config.LOGIN_CODE_ENABLED).toBe(false);
     });
 
     it("should override config file values with environment variables", async () => {
@@ -129,6 +133,16 @@ describe("Config", () => {
       expect(config.TRUST_PROXY).toBe(true);
       expect(config.PASSWORD_MIN_LENGTH).toBe(10);
       expect(config.CORS_POLICY_ORIGIN).toBe("https://env.example");
+    });
+
+    it("should enable login with a code from the environment", async () => {
+      process.env.LOGIN_CODE_ENABLED = "true";
+      fsMock.readJson.mockResolvedValueOnce({});
+
+      const config = new Config();
+      await config.reload();
+
+      expect(config.LOGIN_CODE_ENABLED).toBe(true);
     });
   });
 });

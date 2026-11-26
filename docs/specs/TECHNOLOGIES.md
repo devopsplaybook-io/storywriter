@@ -14,7 +14,7 @@
 
 ### Libraries
 
-- [x] `@devopsplaybook.io/common-utils` — shared utilities (DB, auth, logging)
+- [x] `@devopsplaybook.io/common-utils` — shared utilities (DB, auth, logging) and the optional login-with-a-code routes (enabled by `LOGIN_CODE_ENABLED`)
 - [x] `@devopsplaybook.io/otel-utils-fastify` — OpenTelemetry integration for Fastify
 - [x] `bcrypt` — password hashing
 - [x] `jsonwebtoken` — JWT session tokens
@@ -30,6 +30,7 @@
 - [x] **Layout preference**: CSS Grid strongly preferred for layout; Flexbox for simple one-dimensional alignment
 - [x] **PWA**: Enabled via `@vite-pwa/nuxt`, manifest configured in `nuxt.config.ts`
 - [x] **HTTP client**: Axios for HTTP requests to the backend API
+- [x] `@devopsplaybook.io/common-web` — shared web services, composables and components (theme, offline banner, app-update prompt, login-with-code cards) consumed as raw sources via the alias/transpile non-layer recipe in `nuxt.config.ts`
 - [x] **Markdown rendering**: `marked` library, always sanitized with **DOMPurify** (allow-list) before HTML injection
 - [x] **Browser e2e**: Playwright (chromium) against the assembled all-in-one app (`npm run test` runs unit + e2e)
 - [x] **Design Language**: CSS custom properties for spacing, radius, transitions, typography (defined in `assets/css/main.css`)
@@ -74,4 +75,4 @@
 - [x] Retry with exponential backoff, per-request and overall timeouts; results cached to disk
 - [x] Per-user concurrency and daily-quota limits on AI endpoints (see Reliability)
 
-_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-10-25_
+_Implementation: [x]=Done [~]=Partial [ ]=Not Started | Last spec review: 2026-11-26_

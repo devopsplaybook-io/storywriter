@@ -95,6 +95,7 @@ export async function BuildTarGz(
 export interface TestServerOptions {
   trustProxy?: boolean;
   corsPolicyOrigin?: string;
+  loginCodeEnabled?: boolean;
   logger?: false | { level: string; stream: NodeJS.WritableStream };
 }
 
@@ -128,6 +129,7 @@ export class TestServer {
     this.config.OPENTELEMETRY_COLLECTOR_HTTP_LOGS = "";
     this.config.CORS_POLICY_ORIGIN = options.corsPolicyOrigin ?? "";
     this.config.TRUST_PROXY = options.trustProxy === true;
+    this.config.LOGIN_CODE_ENABLED = options.loginCodeEnabled === true;
 
     const tracer = new StandardTracer(this.config);
     OTelSetTracer(tracer);
