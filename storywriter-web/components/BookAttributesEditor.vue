@@ -117,6 +117,7 @@ import {
   readDraft,
   writeDraft,
 } from "../utils/drafts";
+import { registerDraftFlusher } from "../utils/draftFlush";
 
 const props = defineProps({
   bookId: { type: String, required: true },
@@ -127,6 +128,8 @@ const attrStore = useBookAttributesStore();
 const mediaStore = useMediaStore();
 const saveStatus = useSaveStatusStore();
 const toastsStore = useToastsStore();
+
+let unregisterDraftFlush = null;
 
 const loading = ref(false);
 const editingId = ref(null);
@@ -272,10 +275,13 @@ function flushDraftOnUnload() {
 
 onMounted(() => {
   window.addEventListener("beforeunload", flushDraftOnUnload);
+  unregisterDraftFlush = registerDraftFlusher(flushDraftOnUnload);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("beforeunload", flushDraftOnUnload);
+  unregisterDraftFlush?.();
+  unregisterDraftFlush = null;
 });
 
 async function saveEdit() {

@@ -386,6 +386,7 @@ import {
   readDraft,
   writeDraft,
 } from "../utils/drafts";
+import { registerDraftFlusher } from "../utils/draftFlush";
 import { AI_ACTIONS } from "../utils/aiActions";
 import { countWords } from "../utils/wordCount";
 import { renderMarkdown } from "../utils/safeMarkdown";
@@ -414,6 +415,8 @@ const saveStatus = useSaveStatusStore();
 const sectionsStore = useSectionsStore();
 const llmStore = useLlmStore();
 const toastsStore = useToastsStore();
+
+let unregisterDraftFlush = null;
 
 const contentRef = ref(null);
 const aiMenu = ref(null);
@@ -853,10 +856,13 @@ function flushDraftOnUnload() {
 
 onMounted(() => {
   window.addEventListener("beforeunload", flushDraftOnUnload);
+  unregisterDraftFlush = registerDraftFlusher(flushDraftOnUnload);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("beforeunload", flushDraftOnUnload);
+  unregisterDraftFlush?.();
+  unregisterDraftFlush = null;
 });
 
 const statusIcon = computed(() => {

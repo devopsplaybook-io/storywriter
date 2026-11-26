@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { beforeAll, describe, expect, it } from "vitest";
 
 interface RuntimeCachingRule {
@@ -18,6 +19,17 @@ function ruleMatches(rule: RuntimeCachingRule, url: string): boolean {
 describe("nuxt.config service worker runtime caching", () => {
   let runtimeCaching: RuntimeCachingRule[];
   let appHead: { charset?: string };
+  let pwa: {
+    registerType?: string;
+    updateViaCache?: string;
+    generateSW: {
+      navigateFallback?: string;
+      cleanupOutdatedCaches?: boolean;
+      navigateFallbackDenylist?: RegExp[];
+      skipWaiting?: boolean;
+      clientsClaim?: boolean;
+    };
+  };
 
   beforeAll(async () => {
     // nuxt.config.ts calls the Nuxt global; stub it for the plain import
@@ -26,10 +38,41 @@ describe("nuxt.config service worker runtime caching", () => {
     ) => config;
     const config = (await import("../nuxt.config")).default as {
       app: { head: { charset?: string } };
-      pwa: { generateSW: { runtimeCaching: RuntimeCachingRule[] } };
+      pwa: {
+        registerType?: string;
+        updateViaCache?: string;
+        generateSW: {
+          runtimeCaching: RuntimeCachingRule[];
+          navigateFallback?: string;
+          cleanupOutdatedCaches?: boolean;
+          navigateFallbackDenylist?: RegExp[];
+          skipWaiting?: boolean;
+          clientsClaim?: boolean;
+        };
+      };
     };
     runtimeCaching = config.pwa?.generateSW?.runtimeCaching ?? [];
     appHead = config.app?.head ?? {};
+    pwa = config.pwa;
+  });
+
+  it("uses the shared update prompt instead of auto-reload", () => {
+    expect(pwa.registerType).toBe("prompt");
+    expect(pwa.updateViaCache).toBe("none");
+    // prompt mode implies the waiting worker stays parked: no automatic
+    // activation or page claim at install.
+    expect(pwa.generateSW.skipWaiting).toBeUndefined();
+    expect(pwa.generateSW.clientsClaim).toBeUndefined();
+  });
+
+  it("keeps the offline shell and never answer it for the build manifest", () => {
+    expect(pwa.generateSW.navigateFallback).toBe("/");
+    expect(pwa.generateSW.cleanupOutdatedCaches).toBe(true);
+    const denylist = pwa.generateSW.navigateFallbackDenylist ?? [];
+    const blocksBuilds = denylist.some((pattern) =>
+      pattern.test("/_nuxt/builds/latest.json"),
+    );
+    expect(blocksBuilds).toBe(true);
   });
 
   it("declares the utf-8 charset (matching the HTTP response)", () => {

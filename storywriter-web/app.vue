@@ -9,6 +9,7 @@
       <NuxtPage />
     </main>
     <ToastHost />
+    <AppUpdatePrompt />
   </div>
 </template>
 
